@@ -1,0 +1,38 @@
+{
+  "fixtures/complex.ts": {
+    "f": {
+      "0": 0
+    },
+    "fnMap": {
+      "0": {
+        "loc": {
+          "start": {
+            "line": 1
+          },
+          "end": {
+            "line": 23
+          }
+        },
+        "line": 1
+      }
+    }
+  },
+  "fixtures/simple.ts": {
+    "f": {
+      "0": 1
+    },
+    "fnMap": {
+      "0": {
+        "loc": {
+          "start": {
+            "line": 1
+          },
+          "end": {
+            "line": 7
+          }
+        },
+        "line": 1
+      }
+    }
+  }
+}

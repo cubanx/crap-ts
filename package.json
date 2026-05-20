@@ -1,0 +1,50 @@
+{
+  "name": "crap-ts",
+  "version": "0.1.0",
+  "description": "Small CRAP-score audit helper for TypeScript projects.",
+  "type": "module",
+  "bin": {
+    "crap-ts": "./src/cli.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./src/index.d.ts",
+      "default": "./src/index.js"
+    },
+    "./crap-analysis": {
+      "types": "./src/crap-analysis.d.ts",
+      "default": "./src/crap-analysis.js"
+    },
+    "./crap-runner": {
+      "types": "./src/crap-runner.d.ts",
+      "default": "./src/crap-runner.js"
+    },
+    "./crap-score": {
+      "types": "./src/crap-score.d.ts",
+      "default": "./src/crap-score.js"
+    }
+  },
+  "files": [
+    "src",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "check": "node --test tests/*.test.js",
+    "score": "node src/cli.js score --metrics fixtures/complexity-metrics.json --coverage-file fixtures/coverage-summary.json --max-crap 30",
+    "test": "node --test tests/*.test.js",
+    "validate": "npm run test && npm run score"
+  },
+  "keywords": [
+    "complexity",
+    "typescript",
+    "quality"
+  ],
+  "license": "SEE LICENSE IN LICENSE",
+  "dependencies": {
+    "typescript": "^5.9.3"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
