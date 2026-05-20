@@ -4,7 +4,7 @@
   "description": "Small CRAP-score audit helper for TypeScript projects.",
   "type": "module",
   "bin": {
-    "crap-ts": "./src/cli.js"
+    "crap-ts": "src/cli.js"
   },
   "exports": {
     ".": {
