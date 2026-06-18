@@ -1,0 +1,5 @@
+# package.json "files" controls the published allowlist.
+# This file exists so npm does not fall back to .gitignore and warn.
+
+node_modules/
+npm-debug.log*
