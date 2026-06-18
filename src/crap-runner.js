@@ -3,6 +3,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { isAbsolute, relative, resolve } from "node:path";
 
 import { analyzeFileRisk, extractCoverageFunctions, formatRiskLine } from "./crap-analysis.js";
+import { normalizePath } from "./path-utils.js";
 
 export function runCrapAudit({
   all = false,
@@ -32,7 +33,7 @@ export function runCrapAudit({
 
   if (!existsSync(resolvedCoveragePath)) {
     console.error(`Missing coverage JSON: ${resolvedCoveragePath}`);
-    console.error("Run coverage first, pass --coverage, or use a valid --coverage-command.");
+    console.error("Run coverage first, pass --coverage-file, or use a valid --coverage-command.");
     return 1;
   }
 
@@ -69,7 +70,7 @@ export function runCrapAudit({
   const sortedRisks = risks.sort((left, right) => right.crapScore - left.crapScore);
   const failingRisks = sortedRisks.filter((risk) => risk.crapScore > maxScore);
 
-  console.log("");
+  console.log();
   console.log(
     `CRAP report: ${sortedRisks.length} functions checked, ${failingRisks.length} above ${maxScore}.`,
   );
@@ -99,8 +100,4 @@ function shouldIncludePath(filePath, includes) {
   const normalizedPath = normalizePath(filePath);
 
   return includes.some((include) => normalizedPath.includes(normalizePath(include)));
-}
-
-function normalizePath(path) {
-  return path.replaceAll("\\", "/");
 }

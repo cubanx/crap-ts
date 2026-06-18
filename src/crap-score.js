@@ -1,3 +1,5 @@
+import { normalizePath } from "./path-utils.js";
+
 export function calculateCrapScore({ complexity, coverage }) {
   assertFiniteNumber(complexity, "complexity");
   assertFiniteNumber(coverage, "coverage");
@@ -50,10 +52,6 @@ function findCoverageEntry(coverageSummary, file) {
   });
 
   return match?.[1];
-}
-
-function normalizePath(path) {
-  return path.replaceAll("\\", "/").replace(/^\.?\//, "");
 }
 
 function clamp(value, min, max) {

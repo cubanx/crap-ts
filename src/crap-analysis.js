@@ -103,7 +103,7 @@ function addsDecisionPath(node) {
     ts.isForStatement(node) ||
     ts.isForInStatement(node) ||
     ts.isForOfStatement(node) ||
-    ts[`is${"While"}Statement`](node) ||
+    ts.isWhileStatement(node) ||
     ts.isDoStatement(node) ||
     ts.isCaseClause(node) ||
     ts.isCatchClause(node) ||

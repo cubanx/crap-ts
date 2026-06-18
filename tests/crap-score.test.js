@@ -18,6 +18,16 @@ test("reads file line coverage from coverage summary data", () => {
   assert.equal(getCoverageForFile(summary, "src/example.ts"), 87.5);
 });
 
+test("normalizes relative and Windows coverage paths", () => {
+  const summary = {
+    "repo\\src\\example.ts": {
+      lines: { pct: 91 },
+    },
+  };
+
+  assert.equal(getCoverageForFile(summary, "./src/example.ts"), 91);
+});
+
 test("builds rounded CRAP score rows", () => {
   const scores = buildCrapScores({
     coverageSummary: {

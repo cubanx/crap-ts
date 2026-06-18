@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
-import { readFileSync, realpathSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync } from "node:fs";
+import { resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { fileURLToPath } from "node:url";
 
@@ -19,6 +20,7 @@ Legacy:
   crap-ts --metrics complexity-metrics.json --coverage-file coverage/coverage-summary.json
 
 Options:
+  --config <path>  Config file path. Defaults to .crap-ts.json when present.
   --coverage-file <path>
                     Istanbul coverage JSON path.
   --coverage-command <cmd>
@@ -32,11 +34,12 @@ Options:
   --max-crap <n>    Fail CRAP scoring when any row is above this score.
   --report-only    Print CRAP report without failing on threshold.
   --skip-coverage  Do not run the coverage command.
-  --json           Print the resolved command before running it.
   --help           Show this help.
 `;
 
-export function parseCliArgs(argv) {
+const defaultConfigPath = ".crap-ts.json";
+
+export function parseCliArgs(argv, { cwd = process.cwd() } = {}) {
   const command = getCommand(argv);
   const args = command === "legacy" ? argv : argv.slice(1);
   const { positionals, values } = parseArgs({
@@ -44,11 +47,11 @@ export function parseCliArgs(argv) {
     allowPositionals: true,
     options: {
       all: { type: "boolean" },
+      config: { type: "string" },
       "coverage-file": { type: "string" },
       "coverage-command": { type: "string" },
       help: { type: "boolean", short: "h" },
       include: { type: "string", multiple: true },
-      json: { type: "boolean" },
       limit: { type: "string" },
       max: { type: "string" },
       "max-crap": { type: "string" },
@@ -58,30 +61,31 @@ export function parseCliArgs(argv) {
       "skip-coverage": { type: "boolean" },
     },
   });
+  const config = command === "help" || values.help ? {} : readConfig(values.config, cwd);
 
-  return {
+  return applyDefaults(mergeConfigWithCli(config, {
     command,
-    all: values.all ?? false,
+    all: values.all,
+    configPath: values.config,
     coverageCommand: values["coverage-command"],
     coveragePath: values["coverage-file"],
-    help: values.help ?? false,
-    includes: values.include ?? [],
-    json: values.json ?? false,
+    help: values.help,
+    includes: values.include,
     limit: parseOptionalNumber(values.limit, "--limit"),
     maxCrap: parseOptionalNumber(values["max-crap"], "--max-crap"),
     maxScore: parseOptionalNumber(values.max, "--max"),
     metricsPath: values.metrics,
     minLines: parseOptionalNumber(values["min-lines"], "--min-lines"),
     paths: positionals,
-    reportOnly: values["report-only"] ?? false,
-    skipCoverage: values["skip-coverage"] ?? false,
-  };
+    reportOnly: values["report-only"],
+    skipCoverage: values["skip-coverage"],
+  }));
 }
 
 export function main(argv = process.argv.slice(2)) {
   const options = parseCliArgs(argv);
 
-  if (options.help) {
+  if (options.help || options.command === "help") {
     console.log(helpText);
     return 0;
   }
@@ -101,21 +105,11 @@ export function main(argv = process.argv.slice(2)) {
 
 function runScore(options) {
   if (!options.metricsPath) {
-    return runCrapAudit({
-      coverageCommand: options.coverageCommand,
-      coveragePath: options.coveragePath,
-      all: options.all,
-      includes: options.includes,
-      limit: options.limit,
-      maxScore: options.maxScore,
-      minLines: options.minLines,
-      reportOnly: options.reportOnly,
-      skipCoverage: options.skipCoverage,
-    });
+    return runCrapAudit(options);
   }
 
-  if (!options.metricsPath || !options.coveragePath) {
-    console.error("CRAP scoring requires both --metrics and --coverage.");
+  if (!options.coveragePath) {
+    console.error("CRAP scoring requires both --metrics and --coverage-file.");
     return 2;
   }
 
@@ -142,7 +136,7 @@ function getCommand(argv) {
   const firstArg = argv[0];
 
   if (firstArg === "score" || firstArg === "help") {
-    return firstArg === "help" ? "legacy" : firstArg;
+    return firstArg;
   }
 
   return "legacy";
@@ -160,6 +154,91 @@ function parseOptionalNumber(value, label) {
   }
 
   return parsed;
+}
+
+function readConfig(configPath, cwd) {
+  const resolvedPath = resolveConfigPath(configPath, cwd);
+
+  if (!resolvedPath) {
+    return {};
+  }
+
+  return JSON.parse(readFileSync(resolvedPath, "utf8"));
+}
+
+function resolveConfigPath(configPath, cwd) {
+  if (configPath) {
+    return resolve(cwd, configPath);
+  }
+
+  const defaultPath = resolve(cwd, defaultConfigPath);
+  return existsSync(defaultPath) ? defaultPath : null;
+}
+
+function mergeConfigWithCli(config, cliOptions) {
+  return {
+    ...normalizeConfig(config),
+    ...stripUndefined(cliOptions),
+  };
+}
+
+function normalizeConfig(config) {
+  return stripUndefined({
+    all: config.all,
+    coverageCommand: config.coverageCommand,
+    coveragePath: config.coverageFile,
+    includes: normalizeConfigList(config.include, "include"),
+    limit: parseConfigNumber(config.limit, "limit"),
+    maxCrap: parseConfigNumber(config.maxCrap, "maxCrap"),
+    maxScore: parseConfigNumber(config.max, "max"),
+    metricsPath: config.metrics,
+    minLines: parseConfigNumber(config.minLines, "minLines"),
+    reportOnly: config.reportOnly,
+    skipCoverage: config.skipCoverage,
+  });
+}
+
+function parseConfigNumber(value, label) {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    throw new TypeError(`${label} must be a finite number in ${defaultConfigPath}.`);
+  }
+
+  return value;
+}
+
+function normalizeConfigList(value, label) {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (typeof value === "string") {
+    return [value];
+  }
+
+  if (Array.isArray(value) && value.every((item) => typeof item === "string")) {
+    return value;
+  }
+
+  throw new TypeError(`${label} must be a string or string array in ${defaultConfigPath}.`);
+}
+
+function applyDefaults(options) {
+  return {
+    ...options,
+    all: options.all ?? false,
+    help: options.help ?? false,
+    includes: options.includes ?? [],
+    reportOnly: options.reportOnly ?? false,
+    skipCoverage: options.skipCoverage ?? false,
+  };
+}
+
+function stripUndefined(values) {
+  return Object.fromEntries(Object.entries(values).filter(([, value]) => value !== undefined));
 }
 
 if (isDirectExecution()) {
