@@ -5,9 +5,27 @@ Small CRAP-score audit helper for TypeScript projects.
 `crap-ts` computes CRAP scores from TypeScript cyclomatic complexity plus
 Istanbul/V8 coverage data.
 
+CRAP stands for **Change Risk Anti-Patterns**, from Alberto Savoia and Bob
+Evans' work on combining cyclomatic complexity with test coverage. Savoia
+explains the metric in Google's testing blog post, ["This Code is
+CRAP"](https://testing.googleblog.com/2011/02/this-code-is-crap.html), and the
+old [Crap4J FAQ](https://www.crap4j.org/faq.html) uses the same expansion.
+Risky code plus weak tests, now with a name your manager will remember.
+
+## Works Out Of The Box With
+
+- TypeScript source files listed in an Istanbul-style `coverage-final.json`
+- Vitest V8 coverage, Jest coverage, or nyc/Istanbul coverage that includes
+  function maps
+- npm, Bun, pnpm, or any runner that can produce coverage before `crap-ts` reads
+  it
+
+No Biome required. No framework plugin. Bring coverage JSON, get CRAP. Very
+glamorous work, obviously.
+
 ## Install
 
-```powershell
+```sh
 npm install --save-dev crap-ts
 ```
 
@@ -15,7 +33,7 @@ npm install --save-dev crap-ts
 
 Run the built-in TypeScript AST audit against coverage-final data:
 
-```powershell
+```sh
 npx crap-ts score --coverage-command "npm run test:coverage -- --coverage.reporter=json" --coverage-file coverage/unit/coverage-final.json --include src
 ```
 
@@ -24,18 +42,31 @@ Add package scripts:
 ```json
 {
   "scripts": {
-    "check:crap": "crap-ts score --report-only --coverage-command \"npm run test:coverage -- --coverage.reporter=json --coverage.reporter=json-summary\" --coverage-file coverage/unit/coverage-final.json --include src",
-    "check:crap:strict": "crap-ts score --coverage-command \"npm run test:coverage -- --coverage.reporter=json --coverage.reporter=json-summary\" --coverage-file coverage/unit/coverage-final.json --include src"
+    "check:crap": "crap-ts score --report-only",
+    "check:crap:strict": "crap-ts score"
   }
 }
 ```
 
 `check:crap` is useful while calibrating. `check:crap:strict` is the gate.
 
+Put the long bits in `.crap-ts.json`:
+
+```json
+{
+  "coverageCommand": "npm run test:coverage -- --coverage.reporter=json --coverage.reporter=json-summary",
+  "coverageFile": "coverage/unit/coverage-final.json",
+  "include": ["src"],
+  "max": 30,
+  "minLines": 10,
+  "limit": 20
+}
+```
+
 You can also compute CRAP scores from an external metrics file and coverage
 summary:
 
-```powershell
+```sh
 npx crap-ts --metrics fixtures/complexity-metrics.json --coverage-file fixtures/coverage-summary.json
 ```
 
@@ -70,13 +101,15 @@ branching visible before it becomes a maintenance tax.
 
 ## CLI
 
-```powershell
+```sh
 crap-ts score [--coverage-file coverage/unit/coverage-final.json] [--coverage-command "npm run test:coverage"]
 crap-ts --metrics complexity-metrics.json --coverage-file coverage/coverage-summary.json
 ```
 
 Options:
 
+- `--config <path>`: read config from a JSON file. Defaults to `.crap-ts.json`
+  when present.
 - `--coverage-file <path>`: read coverage from a coverage JSON file.
 - `--coverage-command <cmd>`: run a coverage command before scoring.
 - `--all`: print every analyzed function instead of applying `--limit`.
@@ -85,7 +118,6 @@ Options:
 - `--max <n>`: strict CRAP threshold for direct audit. Defaults to `30`.
 - `--min-lines <n>`: ignore functions shorter than this. Defaults to `10`.
 - `--metrics <path>`: read complexity metrics from JSON.
-- `--json`: print the resolved command before running it.
 - `--report-only`: print CRAP results without failing on threshold.
 - `--skip-coverage`: use an existing coverage file.
 
@@ -101,6 +133,25 @@ Metrics files use this shape:
 ]
 ```
 
+Config files use camelCase keys:
+
+```json
+{
+  "coverageCommand": "npm run test:coverage",
+  "coverageFile": "coverage/unit/coverage-final.json",
+  "include": ["src"],
+  "all": false,
+  "limit": 20,
+  "max": 30,
+  "minLines": 10,
+  "reportOnly": false,
+  "skipCoverage": false
+}
+```
+
+CLI flags override config. Naturally. The command line gets the last word,
+because you'd be mad at me if it didn't, and I'd also be mad at me.
+
 ## Replacing Local CRAP Scripts
 
 For a Bun/Vitest app that already writes coverage to `coverage/unit`, local
@@ -109,9 +160,19 @@ scripts can usually shrink to:
 ```json
 {
   "scripts": {
-    "check:crap": "crap-ts score --report-only --coverage-command \"bun x vitest run --coverage --coverage.reporter=json --coverage.reporter=json-summary\" --coverage-file coverage/unit/coverage-final.json --include /app/ --include /scripts/",
-    "check:crap:strict": "crap-ts score --coverage-command \"bun x vitest run --coverage --coverage.reporter=json --coverage.reporter=json-summary\" --coverage-file coverage/unit/coverage-final.json --include /app/ --include /scripts/"
+    "check:crap": "crap-ts score --report-only",
+    "check:crap:strict": "crap-ts score"
   }
+}
+```
+
+With `.crap-ts.json`:
+
+```json
+{
+  "coverageCommand": "bun x vitest run --coverage --coverage.reporter=json --coverage.reporter=json-summary",
+  "coverageFile": "coverage/unit/coverage-final.json",
+  "include": ["/app/", "/scripts/"]
 }
 ```
 
@@ -119,7 +180,11 @@ After that, repo-local CRAP analyzer scripts and tests can be deleted. Keep the
 project's coverage test config; that remains the source of truth for coverage
 instrumentation.
 
+## Contributing
+
+Pull requests are welcome. Keep them focused, add tests when behavior changes,
+and see [CONTRIBUTING.md](CONTRIBUTING.md) sullying my code ;)
+
 ## License
 
-This repository includes a placeholder license file. Choose the final license
-before publishing.
+MIT
