@@ -1,3 +1,3 @@
 export function normalizePath(path) {
-  return path.replaceAll("\\", "/").replace(/^\.?\//, "");
+	return path.replaceAll("\\", "/").replace(/^\.?\//, "");
 }

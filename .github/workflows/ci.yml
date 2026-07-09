@@ -1,0 +1,83 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run check
+      - run: npm test
+      - run: npm run validate
+
+  consumer-typescript:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        typescript:
+          - 5.9.3
+          - 6.0.3
+          - 7.0.2
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+
+      - run: npm ci
+
+      - name: Pack package
+        run: npm pack --pack-destination "$RUNNER_TEMP"
+
+      - name: Verify consumer install
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          project="$RUNNER_TEMP/consumer"
+          mkdir "$project"
+          cd "$project"
+
+          npm init -y
+          npm pkg set type=module
+          npm install "$RUNNER_TEMP"/crap-ts-*.tgz "typescript@${{ matrix.typescript }}"
+
+          cat > sample.ts <<'EOF'
+          function f(x: number) {
+            if (x > 0 && x < 3) {
+              return x;
+            }
+
+            return 0;
+          }
+          EOF
+
+          cat > coverage-final.json <<'EOF'
+          {
+            "sample.ts": {
+              "f": { "0": 0 },
+              "fnMap": {
+                "0": { "line": 1, "loc": { "start": { "line": 1 }, "end": { "line": 7 } } }
+              }
+            }
+          }
+          EOF
+
+          ./node_modules/.bin/crap-ts score --coverage-file coverage-final.json --min-lines 1 --report-only --all
+          test ! -d node_modules/crap-ts/node_modules/typescript

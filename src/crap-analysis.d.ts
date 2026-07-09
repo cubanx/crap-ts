@@ -1,31 +1,31 @@
 export interface FunctionRisk {
-  complexity: number;
-  coveragePercent: number;
-  crapScore: number;
-  endLine: number;
-  filePath: string;
-  lineCount: number;
-  name: string;
-  startLine: number;
+	complexity: number;
+	coveragePercent: number;
+	crapScore: number;
+	endLine: number;
+	filePath: string;
+	lineCount: number;
+	name: string;
+	startLine: number;
 }
 
 export interface CoverageFunction {
-  coveragePercent: number;
-  declarationLine: number;
-  endLine: number;
-  startLine: number;
+	coveragePercent: number;
+	declarationLine: number;
+	endLine: number;
+	startLine: number;
 }
 
 export function extractCoverageFunctions(
-  coverageJson: Record<string, unknown>,
+	coverageJson: Record<string, unknown>,
 ): Map<string, CoverageFunction[]>;
 
 export function analyzeFileRisk(input: {
-  coverageFunctions: CoverageFunction[];
-  filePath: string;
-  minLines: number;
-  sourceFilePath?: string;
-  sourceText: string;
+	coverageFunctions: CoverageFunction[];
+	filePath: string;
+	minLines: number;
+	sourceFilePath?: string;
+	sourceText: string;
 }): Promise<FunctionRisk[]>;
 
 export function formatRiskLine(risk: FunctionRisk): string;
