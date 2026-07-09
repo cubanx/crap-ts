@@ -82,7 +82,7 @@ export function parseCliArgs(argv, { cwd = process.cwd() } = {}) {
   }));
 }
 
-export function main(argv = process.argv.slice(2)) {
+export async function main(argv = process.argv.slice(2)) {
   const options = parseCliArgs(argv);
 
   if (options.help || options.command === "help") {
@@ -103,7 +103,7 @@ export function main(argv = process.argv.slice(2)) {
   return 2;
 }
 
-function runScore(options) {
+async function runScore(options) {
   if (!options.metricsPath) {
     return runCrapAudit(options);
   }
@@ -242,7 +242,7 @@ function stripUndefined(values) {
 }
 
 if (isDirectExecution()) {
-  process.exitCode = main();
+  process.exitCode = await main();
 }
 
 function isDirectExecution() {

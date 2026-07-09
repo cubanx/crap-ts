@@ -6,10 +6,10 @@ import { test } from "node:test";
 
 import { runCrapAudit } from "../src/crap-runner.js";
 
-test("reports missing coverage file with coverage-file wording", () => {
+test("reports missing coverage file with coverage-file wording", async () => {
   const cwd = mkdtempSync(join(tmpdir(), "crap-runner-missing-"));
-  const messages = captureConsole(() => {
-    assert.equal(runCrapAudit({ cwd, skipCoverage: true }), 1);
+  const messages = await captureConsole(async () => {
+    assert.equal(await runCrapAudit({ cwd, skipCoverage: true }), 1);
   });
 
   rmSync(cwd, { force: true, recursive: true });
@@ -17,7 +17,7 @@ test("reports missing coverage file with coverage-file wording", () => {
   assert.match(messages.errors.join("\n"), /--coverage-file/);
 });
 
-test("normalizes include paths and honors --all", () => {
+test("normalizes include paths and honors --all", async () => {
   const cwd = mkdtempSync(join(tmpdir(), "crap-runner-all-"));
   writeFileSync(
     join(cwd, "first.ts"),
@@ -57,9 +57,9 @@ function second(value) {
     }),
   );
 
-  const limited = captureConsole(() => {
+  const limited = await captureConsole(async () => {
     assert.equal(
-      runCrapAudit({
+      await runCrapAudit({
         coveragePath: "coverage-final.json",
         cwd,
         includes: ["./first"],
@@ -71,9 +71,9 @@ function second(value) {
       0,
     );
   });
-  const full = captureConsole(() => {
+  const full = await captureConsole(async () => {
     assert.equal(
-      runCrapAudit({
+      await runCrapAudit({
         all: true,
         coveragePath: "coverage-final.json",
         cwd,
@@ -96,11 +96,11 @@ function second(value) {
   assert.match(full.logs.join("\n"), /second/);
 });
 
-test("runs coverage command before auditing", () => {
+test("runs coverage command before auditing", async () => {
   const cwd = mkdtempSync(join(tmpdir(), "crap-runner-cmd-"));
   writeFileSync(join(cwd, "coverage-final.json"), JSON.stringify({}));
 
-  const messages = captureConsole(() =>
+  const messages = await captureConsole(() =>
     runCrapAudit({
       coverageCommand: "true",
       coveragePath: "coverage-final.json",
@@ -116,10 +116,10 @@ test("runs coverage command before auditing", () => {
   assert.match(messages.logs.join("\n"), /0 functions checked/);
 });
 
-test("returns non-zero when coverage command fails", () => {
+test("returns non-zero when coverage command fails", async () => {
   const cwd = mkdtempSync(join(tmpdir(), "crap-runner-fail-"));
 
-  const messages = captureConsole(() =>
+  const messages = await captureConsole(() =>
     runCrapAudit({
       coverageCommand: "false",
       cwd,
@@ -131,7 +131,7 @@ test("returns non-zero when coverage command fails", () => {
   assert.equal(messages.result, 1);
 });
 
-function captureConsole(callback) {
+async function captureConsole(callback) {
   const logs = [];
   const errors = [];
   const originalLog = console.log;
@@ -142,7 +142,7 @@ function captureConsole(callback) {
   console.error = (...args) => errors.push(args.join(" "));
 
   try {
-    result = callback();
+    result = await callback();
   } finally {
     console.log = originalLog;
     console.error = originalError;

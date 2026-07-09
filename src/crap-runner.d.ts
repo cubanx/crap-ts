@@ -11,4 +11,4 @@ export interface CrapAuditOptions {
   skipCoverage?: boolean;
 }
 
-export function runCrapAudit(options?: CrapAuditOptions): number;
+export function runCrapAudit(options?: CrapAuditOptions): Promise<number>;

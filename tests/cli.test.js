@@ -6,9 +6,9 @@ import { test } from "node:test";
 
 import { main, parseCliArgs } from "../src/cli.js";
 
-test("score with metrics but no coverage file returns a usage error", () => {
-  const messages = captureConsole(() => {
-    assert.equal(main(["score", "--metrics", "missing.json"]), 2);
+test("score with metrics but no coverage file returns a usage error", async () => {
+  const messages = await captureConsole(async () => {
+    assert.equal(await main(["score", "--metrics", "missing.json"]), 2);
   });
 
   assert.deepEqual(messages.errors, [
@@ -16,9 +16,9 @@ test("score with metrics but no coverage file returns a usage error", () => {
   ]);
 });
 
-test("help subcommand prints help", () => {
-  const messages = captureConsole(() => {
-    assert.equal(main(["help"]), 0);
+test("help subcommand prints help", async () => {
+  const messages = await captureConsole(async () => {
+    assert.equal(await main(["help"]), 0);
   });
 
   assert.match(messages.logs.join("\n"), /Usage:/);
@@ -131,7 +131,7 @@ test("CLI flags override config values", () => {
   assert.equal(options.maxScore, 10);
 });
 
-function captureConsole(callback) {
+async function captureConsole(callback) {
   const logs = [];
   const errors = [];
   const originalLog = console.log;
@@ -141,7 +141,7 @@ function captureConsole(callback) {
   console.error = (...args) => errors.push(args.join(" "));
 
   try {
-    callback();
+    await callback();
   } finally {
     console.log = originalLog;
     console.error = originalError;

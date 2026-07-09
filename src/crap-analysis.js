@@ -1,3 +1,7 @@
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { basename, join, resolve } from "node:path";
+
 import ts from "typescript";
 
 import { calculateCrapScoreFromPercent } from "./crap-score.js";
@@ -30,19 +34,26 @@ export function extractCoverageFunctions(coverageJson) {
   return coverageByFile;
 }
 
-export function analyzeFileRisk({ coverageFunctions, filePath, minLines, sourceText }) {
-  const sourceFile = ts.createSourceFile(filePath, sourceText, ts.ScriptTarget.Latest, true);
+export async function analyzeFileRisk({
+  coverageFunctions,
+  filePath,
+  minLines,
+  sourceFilePath,
+  sourceText,
+}) {
+  const adapter = await getTypescriptAdapter({ filePath, sourceFilePath, sourceText });
+  const { sourceFile } = adapter;
   const risks = [];
 
   function visit(node) {
-    if (isFunctionLikeNode(node) && node.body) {
+    if (isFunctionLikeNode(adapter, node) && node.body) {
       const startLine =
         sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile)).line + 1;
       const endLine = sourceFile.getLineAndCharacterOfPosition(node.getEnd()).line + 1;
       const lineCount = endLine - startLine + 1;
 
       if (lineCount >= minLines) {
-        const complexity = calculateCyclomaticComplexity(node.body);
+        const complexity = calculateCyclomaticComplexity(node.body, adapter);
         const coveragePercent = getFunctionCoveragePercent({
           coverageFunctions,
           endLine,
@@ -56,13 +67,13 @@ export function analyzeFileRisk({ coverageFunctions, filePath, minLines, sourceT
           endLine,
           filePath,
           lineCount,
-          name: getFunctionName(node, sourceFile),
+          name: getFunctionName(adapter, node, sourceFile),
           startLine,
         });
       }
     }
 
-    ts.forEachChild(node, visit);
+    adapter.forEachChild(node, visit);
   }
 
   visit(sourceFile);
@@ -81,15 +92,15 @@ export function formatRiskLine(risk) {
   ].join(" | ");
 }
 
-export function calculateCyclomaticComplexity(node) {
+export function calculateCyclomaticComplexity(node, adapter = getTs5Adapter()) {
   let complexity = 1;
 
   function visit(child) {
-    if (addsDecisionPath(child)) {
+    if (addsDecisionPath(adapter, child)) {
       complexity += 1;
     }
 
-    ts.forEachChild(child, visit);
+    adapter.forEachChild(child, visit);
   }
 
   visit(node);
@@ -97,26 +108,26 @@ export function calculateCyclomaticComplexity(node) {
   return complexity;
 }
 
-function addsDecisionPath(node) {
+function addsDecisionPath(adapter, node) {
   if (
-    ts.isIfStatement(node) ||
-    ts.isForStatement(node) ||
-    ts.isForInStatement(node) ||
-    ts.isForOfStatement(node) ||
-    ts.isWhileStatement(node) ||
-    ts.isDoStatement(node) ||
-    ts.isCaseClause(node) ||
-    ts.isCatchClause(node) ||
-    ts.isConditionalExpression(node)
+    adapter.isIfStatement(node) ||
+    adapter.isForStatement(node) ||
+    adapter.isForInStatement(node) ||
+    adapter.isForOfStatement(node) ||
+    adapter.isWhileStatement(node) ||
+    adapter.isDoStatement(node) ||
+    adapter.isCaseClause(node) ||
+    adapter.isCatchClause(node) ||
+    adapter.isConditionalExpression(node)
   ) {
     return true;
   }
 
   return (
-    ts.isBinaryExpression(node) &&
-    (node.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken ||
-      node.operatorToken.kind === ts.SyntaxKind.BarBarToken ||
-      node.operatorToken.kind === ts.SyntaxKind.QuestionQuestionToken)
+    adapter.isBinaryExpression(node) &&
+    (node.operatorToken.kind === adapter.SyntaxKind.AmpersandAmpersandToken ||
+      node.operatorToken.kind === adapter.SyntaxKind.BarBarToken ||
+      node.operatorToken.kind === adapter.SyntaxKind.QuestionQuestionToken)
   );
 }
 
@@ -141,33 +152,88 @@ function getFunctionCoveragePercent({ coverageFunctions, endLine, startLine }) {
   return containingMatch?.coveragePercent ?? 0;
 }
 
-function getFunctionName(node, sourceFile) {
-  if ((ts.isFunctionDeclaration(node) || ts.isFunctionExpression(node)) && node.name) {
+function getFunctionName(adapter, node, sourceFile) {
+  if ((adapter.isFunctionDeclaration(node) || adapter.isFunctionExpression(node)) && node.name) {
     return node.name.getText(sourceFile);
   }
 
-  if (ts.isMethodDeclaration(node) && node.name) {
+  if (adapter.isMethodDeclaration(node) && node.name) {
     return node.name.getText(sourceFile);
   }
 
   const parent = node.parent;
 
-  if (ts.isVariableDeclaration(parent) && parent.name) {
+  if (adapter.isVariableDeclaration(parent) && parent.name) {
     return parent.name.getText(sourceFile);
   }
 
-  if (ts.isPropertyAssignment(parent) && parent.name) {
+  if (adapter.isPropertyAssignment(parent) && parent.name) {
     return parent.name.getText(sourceFile);
   }
 
   return "<anonymous>";
 }
 
-function isFunctionLikeNode(node) {
+function isFunctionLikeNode(adapter, node) {
   return (
-    ts.isFunctionDeclaration(node) ||
-    ts.isFunctionExpression(node) ||
-    ts.isArrowFunction(node) ||
-    ts.isMethodDeclaration(node)
+    adapter.isFunctionDeclaration(node) ||
+    adapter.isFunctionExpression(node) ||
+    adapter.isArrowFunction(node) ||
+    adapter.isMethodDeclaration(node)
   );
+}
+
+function getTs5Adapter() {
+  return {
+    ...ts,
+    forEachChild: ts.forEachChild,
+  };
+}
+
+async function getTypescriptAdapter({ filePath, sourceFilePath, sourceText }) {
+  if (ts.createSourceFile) {
+    return {
+      ...getTs5Adapter(),
+      sourceFile: ts.createSourceFile(filePath, sourceText, ts.ScriptTarget.Latest, true),
+    };
+  }
+
+  const [{ API }, ast] = await Promise.all([
+    import("typescript/unstable/sync"),
+    import("typescript/unstable/ast"),
+  ]);
+  const temporaryDirectory = sourceFilePath ? null : mkdtempSync(join(tmpdir(), "crap-ts-"));
+  const resolvedPath = sourceFilePath
+    ? resolve(sourceFilePath)
+    : join(temporaryDirectory, basename(filePath));
+
+  if (temporaryDirectory) {
+    writeFileSync(resolvedPath, sourceText);
+  }
+
+  const api = new API();
+
+  try {
+    const snapshot = api.updateSnapshot({ openFiles: [resolvedPath] });
+    const project = snapshot.getDefaultProjectForFile(resolvedPath);
+    const sourceFile = project?.program.getSourceFile(resolvedPath);
+
+    if (!sourceFile) {
+      throw new Error(`Unable to parse TypeScript source file: ${filePath}`);
+    }
+
+    return {
+      ...ast,
+      forEachChild(node, visitor) {
+        ast.visitEachChild(node, visitor, null);
+      },
+      sourceFile,
+    };
+  } finally {
+    api.close();
+
+    if (temporaryDirectory) {
+      rmSync(temporaryDirectory, { force: true, recursive: true });
+    }
+  }
 }

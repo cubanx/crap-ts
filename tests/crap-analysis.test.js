@@ -39,8 +39,8 @@ test("skips coverage functions with missing locations", () => {
   assert.deepEqual(coverage.get("/tmp/example.ts"), []);
 });
 
-test("analyzes complex uncovered functions", () => {
-  const risks = analyzeFileRisk({
+test("analyzes complex uncovered functions", async () => {
+  const risks = await analyzeFileRisk({
     coverageFunctions: [{ coveragePercent: 0, declarationLine: 2, endLine: 13, startLine: 2 }],
     filePath: "/tmp/example.ts",
     minLines: 1,
@@ -64,8 +64,8 @@ function choose(value) {
   assert.equal(risks[0].name, "choose");
 });
 
-test("uses containing coverage match when exact lines differ", () => {
-  const risks = analyzeFileRisk({
+test("uses containing coverage match when exact lines differ", async () => {
+  const risks = await analyzeFileRisk({
     coverageFunctions: [{ coveragePercent: 100, declarationLine: 1, endLine: 8, startLine: 1 }],
     filePath: "/tmp/example.ts",
     minLines: 1,
@@ -84,8 +84,8 @@ const choose = (value) => {
   assert.equal(risks[0].name, "choose");
 });
 
-test("names methods and anonymous functions", () => {
-  const risks = analyzeFileRisk({
+test("names methods and anonymous functions", async () => {
+  const risks = await analyzeFileRisk({
     coverageFunctions: [],
     filePath: "/tmp/example.ts",
     minLines: 1,

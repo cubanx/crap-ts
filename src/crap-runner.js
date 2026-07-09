@@ -5,7 +5,7 @@ import { isAbsolute, relative, resolve } from "node:path";
 import { analyzeFileRisk, extractCoverageFunctions, formatRiskLine } from "./crap-analysis.js";
 import { normalizePath } from "./path-utils.js";
 
-export function runCrapAudit({
+export async function runCrapAudit({
   all = false,
   coverageCommand,
   coveragePath = "coverage/unit/coverage-final.json",
@@ -58,12 +58,13 @@ export function runCrapAudit({
     const relativeFilePath = relative(cwd, sourceFilePath);
 
     risks.push(
-      ...analyzeFileRisk({
+      ...(await analyzeFileRisk({
         coverageFunctions,
         filePath: relativeFilePath,
         minLines,
+        sourceFilePath,
         sourceText,
-      }),
+      })),
     );
   }
 

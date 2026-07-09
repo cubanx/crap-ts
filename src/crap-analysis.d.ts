@@ -1,5 +1,3 @@
-import ts from "typescript";
-
 export interface FunctionRisk {
   complexity: number;
   coveragePercent: number;
@@ -26,9 +24,10 @@ export function analyzeFileRisk(input: {
   coverageFunctions: CoverageFunction[];
   filePath: string;
   minLines: number;
+  sourceFilePath?: string;
   sourceText: string;
-}): FunctionRisk[];
+}): Promise<FunctionRisk[]>;
 
 export function formatRiskLine(risk: FunctionRisk): string;
 
-export function calculateCyclomaticComplexity(node: ts.Node): number;
+export function calculateCyclomaticComplexity(node: unknown): number;

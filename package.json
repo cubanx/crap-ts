@@ -42,10 +42,13 @@
     "quality"
   ],
   "license": "MIT",
-  "dependencies": {
-    "typescript": "^5.9.3"
-  },
   "engines": {
     "node": ">=20"
+  },
+  "peerDependencies": {
+    "typescript": ">=5.9 <8"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3"
   }
 }
