@@ -1,6 +1,6 @@
 {
 	"name": "crap-ts",
-	"version": "0.1.0",
+	"version": "0.1.1",
 	"description": "Small CRAP-score audit helper for TypeScript projects.",
 	"type": "module",
 	"bin": {
