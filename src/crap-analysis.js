@@ -1,6 +1,6 @@
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, join, resolve } from "node:path";
+import { basename, join } from "node:path";
 
 import ts from "typescript";
 
@@ -100,7 +100,10 @@ export function formatRiskLine(risk) {
 	].join(" | ");
 }
 
-export function calculateCyclomaticComplexity(node, adapter = getTs5Adapter()) {
+export function calculateCyclomaticComplexity(
+	node,
+	adapter = getDefaultComplexityAdapter(),
+) {
 	let complexity = 1;
 
 	function visit(child) {
@@ -204,6 +207,53 @@ function getTs5Adapter() {
 	};
 }
 
+function getDefaultComplexityAdapter() {
+	if (ts.createSourceFile) {
+		return getTs5Adapter();
+	}
+
+	return getTs7NodeAdapter();
+}
+
+function getTs7NodeAdapter() {
+	return {
+		SyntaxKind: ts7SyntaxKind,
+		forEachChild(node, visitor) {
+			node.forEachChild?.(visitor);
+		},
+		isBinaryExpression: isSyntaxKind(ts7SyntaxKind.BinaryExpression),
+		isCaseClause: isSyntaxKind(ts7SyntaxKind.CaseClause),
+		isCatchClause: isSyntaxKind(ts7SyntaxKind.CatchClause),
+		isConditionalExpression: isSyntaxKind(ts7SyntaxKind.ConditionalExpression),
+		isDoStatement: isSyntaxKind(ts7SyntaxKind.DoStatement),
+		isForInStatement: isSyntaxKind(ts7SyntaxKind.ForInStatement),
+		isForOfStatement: isSyntaxKind(ts7SyntaxKind.ForOfStatement),
+		isForStatement: isSyntaxKind(ts7SyntaxKind.ForStatement),
+		isIfStatement: isSyntaxKind(ts7SyntaxKind.IfStatement),
+		isWhileStatement: isSyntaxKind(ts7SyntaxKind.WhileStatement),
+	};
+}
+
+function isSyntaxKind(kind) {
+	return (node) => node?.kind === kind;
+}
+
+const ts7SyntaxKind = {
+	AmpersandAmpersandToken: 55,
+	BarBarToken: 56,
+	BinaryExpression: 227,
+	CaseClause: 297,
+	CatchClause: 300,
+	ConditionalExpression: 228,
+	DoStatement: 247,
+	ForInStatement: 250,
+	ForOfStatement: 251,
+	ForStatement: 249,
+	IfStatement: 246,
+	QuestionQuestionToken: 60,
+	WhileStatement: 248,
+};
+
 async function getTypescriptAdapter({ filePath, sourceFilePath, sourceText }) {
 	if (ts.createSourceFile) {
 		return {
@@ -221,16 +271,13 @@ async function getTypescriptAdapter({ filePath, sourceFilePath, sourceText }) {
 		import("typescript/unstable/sync"),
 		import("typescript/unstable/ast"),
 	]);
-	const temporaryDirectory = sourceFilePath
-		? null
-		: mkdtempSync(join(tmpdir(), "crap-ts-"));
-	const resolvedPath = sourceFilePath
-		? resolve(sourceFilePath)
-		: join(temporaryDirectory, basename(filePath));
+	const temporaryDirectory = mkdtempSync(join(tmpdir(), "crap-ts-"));
+	const resolvedPath = join(
+		temporaryDirectory,
+		basename(sourceFilePath ?? filePath),
+	);
 
-	if (temporaryDirectory) {
-		writeFileSync(resolvedPath, sourceText);
-	}
+	writeFileSync(resolvedPath, sourceText);
 
 	const api = new API();
 
@@ -253,8 +300,6 @@ async function getTypescriptAdapter({ filePath, sourceFilePath, sourceText }) {
 	} finally {
 		api.close();
 
-		if (temporaryDirectory) {
-			rmSync(temporaryDirectory, { force: true, recursive: true });
-		}
+		rmSync(temporaryDirectory, { force: true, recursive: true });
 	}
 }

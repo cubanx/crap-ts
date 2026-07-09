@@ -92,6 +92,7 @@ function verifyConsumerTypescript(version) {
 			],
 			{ cwd: consumer },
 		);
+		run("node", ["api-check.mjs"], { cwd: consumer });
 
 		const nestedNodeModules = join(
 			consumer,
@@ -179,6 +180,79 @@ const risks = await analyzeFileRisk({
 });
 
 console.log(risks.length);
+`,
+	);
+	writeFileSync(
+		join(consumer, "api-check.mjs"),
+		`import assert from "node:assert/strict";
+import { writeFileSync } from "node:fs";
+import { join } from "node:path";
+import ts from "typescript";
+import {
+\tanalyzeFileRisk,
+\tcalculateCyclomaticComplexity,
+} from "crap-ts/crap-analysis";
+
+const complexitySource = \`function choose(value, list) {
+\twhile (value > 0) {
+\t\tvalue -= 1;
+\t}
+
+\tfor (const item of list) {
+\t\ttry {
+\t\t\tif (item.enabled && (item.name || item.alias ?? value)) {
+\t\t\t\treturn item.name ? item.name : "fallback";
+\t\t\t}
+\t\t} catch {
+\t\t\treturn "error";
+\t\t}
+\t}
+
+\treturn "none";
+}
+\`;
+
+if (ts.createSourceFile) {
+\tconst sourceFile = ts.createSourceFile(
+\t\t"api-sample.ts",
+\t\tcomplexitySource,
+\t\tts.ScriptTarget.Latest,
+\t\ttrue,
+\t);
+
+\tassert.equal(calculateCyclomaticComplexity(sourceFile.statements[0].body), 9);
+} else {
+\tconst { API } = await import("typescript/unstable/sync");
+\tconst apiSamplePath = join(process.cwd(), "api-sample.ts");
+
+\twriteFileSync(apiSamplePath, complexitySource);
+
+\tconst api = new API();
+
+\ttry {
+\t\tconst snapshot = api.updateSnapshot({ openFiles: [apiSamplePath] });
+\t\tconst sourceFile = snapshot
+\t\t\t.getDefaultProjectForFile(apiSamplePath)
+\t\t\t?.program.getSourceFile(apiSamplePath);
+
+\t\tassert.equal(calculateCyclomaticComplexity(sourceFile.statements[0].body), 9);
+\t} finally {
+\t\tapi.close();
+\t}
+}
+
+const risks = await analyzeFileRisk({
+\tcoverageFunctions: [],
+\tfilePath: "in-memory.ts",
+\tminLines: 1,
+\tsourceFilePath: "sample.ts",
+\tsourceText: "function fromMemory() { return 1; }",
+});
+
+assert.deepEqual(
+\trisks.map((risk) => risk.name),
+\t["fromMemory"],
+);
 `,
 	);
 }
