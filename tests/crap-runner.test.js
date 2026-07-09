@@ -1,10 +1,13 @@
 import assert from "node:assert/strict";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { test } from "node:test";
+import { fileURLToPath } from "node:url";
 
 import { runCrapAudit } from "../src/crap-runner.js";
+
+const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
 test("reports missing coverage file with coverage-file wording", async () => {
 	const cwd = mkdtempSync(join(tmpdir(), "crap-runner-missing-"));
@@ -133,6 +136,34 @@ test("returns non-zero when coverage command fails", async () => {
 	rmSync(cwd, { force: true, recursive: true });
 
 	assert.equal(messages.result, 1);
+});
+
+test("fails strict mode for an uncovered high-CRAP fixture", async () => {
+	const strict = await captureConsole(() =>
+		runCrapAudit({
+			coveragePath: "fixtures/risky-coverage-final.json",
+			cwd: repoRoot,
+			maxScore: 5,
+			minLines: 1,
+			skipCoverage: true,
+		}),
+	);
+	const reportOnly = await captureConsole(() =>
+		runCrapAudit({
+			coveragePath: "fixtures/risky-coverage-final.json",
+			cwd: repoRoot,
+			maxScore: 5,
+			minLines: 1,
+			reportOnly: true,
+			skipCoverage: true,
+		}),
+	);
+
+	assert.equal(strict.result, 1);
+	assert.match(strict.logs.join("\n"), /riskyDecision/);
+	assert.match(strict.errors.join("\n"), /CRAP check failed/);
+	assert.equal(reportOnly.result, 0);
+	assert.match(reportOnly.logs.join("\n"), /1 functions checked, 1 above 5/);
 });
 
 async function captureConsole(callback) {

@@ -1,0 +1,20 @@
+{
+	"fixtures/risky.ts": {
+		"f": {
+			"0": 0
+		},
+		"fnMap": {
+			"0": {
+				"loc": {
+					"start": {
+						"line": 1
+					},
+					"end": {
+						"line": 18
+					}
+				},
+				"line": 1
+			}
+		}
+	}
+}
