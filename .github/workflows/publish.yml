@@ -23,16 +23,16 @@ jobs:
           cache: npm
           registry-url: https://registry.npmjs.org
 
-      - name: Check package version change
+      - name: Check package version availability
         id: version
         shell: bash
         run: |
           set -euo pipefail
 
-          old_version="$(git show "${{ github.event.before }}:package.json" | node -e 'let data = ""; process.stdin.on("data", (chunk) => data += chunk); process.stdin.on("end", () => console.log(JSON.parse(data).version));')"
-          new_version="$(node -p 'require("./package.json").version')"
+          package_name="$(node -p 'require("./package.json").name')"
+          package_version="$(node -p 'require("./package.json").version')"
 
-          if [ "$old_version" = "$new_version" ]; then
+          if npm view "$package_name@$package_version" version >/dev/null 2>&1; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
           else
             echo "changed=true" >> "$GITHUB_OUTPUT"
