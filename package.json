@@ -2,6 +2,10 @@
 	"name": "crap-ts",
 	"version": "0.1.1",
 	"description": "Small CRAP-score audit helper for TypeScript projects.",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/cubanx/crap-ts.git"
+	},
 	"type": "module",
 	"bin": {
 		"crap-ts": "src/cli.js"
