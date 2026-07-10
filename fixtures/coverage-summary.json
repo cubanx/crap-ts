@@ -1,17 +1,17 @@
 {
-  "fixtures/complex.ts": {
-    "lines": {
-      "pct": 72
-    }
-  },
-  "fixtures/simple.ts": {
-    "lines": {
-      "pct": 100
-    }
-  },
-  "total": {
-    "lines": {
-      "pct": 86
-    }
-  }
+	"fixtures/complex.ts": {
+		"lines": {
+			"pct": 72
+		}
+	},
+	"fixtures/simple.ts": {
+		"lines": {
+			"pct": 100
+		}
+	},
+	"total": {
+		"lines": {
+			"pct": 86
+		}
+	}
 }

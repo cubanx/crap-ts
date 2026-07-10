@@ -15,6 +15,7 @@ Risky code plus weak tests, now with a name your manager will remember.
 ## Works Out Of The Box With
 
 - TypeScript source files listed in an Istanbul-style `coverage-final.json`
+- Consumer-provided TypeScript versions `>=5.9 <8`, including TypeScript 7
 - Vitest V8 coverage, Jest coverage, or nyc/Istanbul coverage that includes
   function maps
 - npm, Bun, pnpm, or any runner that can produce coverage before `crap-ts` reads
@@ -28,6 +29,9 @@ glamorous work, obviously.
 ```sh
 npm install --save-dev crap-ts
 ```
+
+`crap-ts` uses your project's installed TypeScript peer dependency, so
+TypeScript 7 projects do not get a nested TypeScript 5.x install.
 
 ## Usage
 

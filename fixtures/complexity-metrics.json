@@ -1,12 +1,12 @@
 [
-  {
-    "file": "fixtures/complex.ts",
-    "name": "classifySignal",
-    "complexity": 9
-  },
-  {
-    "file": "fixtures/simple.ts",
-    "name": "describeCount",
-    "complexity": 2
-  }
+	{
+		"file": "fixtures/complex.ts",
+		"name": "classifySignal",
+		"complexity": 9
+	},
+	{
+		"file": "fixtures/simple.ts",
+		"name": "describeCount",
+		"complexity": 2
+	}
 ]
