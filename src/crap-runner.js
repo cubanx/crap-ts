@@ -20,7 +20,15 @@ export async function runCrapAudit({
 	minLines = 10,
 	reportOnly = false,
 	skipCoverage = false,
+	warnScore,
 } = {}) {
+	if (warnScore !== undefined && warnScore > maxScore) {
+		console.error(
+			`CRAP warn (${warnScore}) must not exceed max (${maxScore}).`,
+		);
+		return 2;
+	}
+
 	if (!skipCoverage && coverageCommand) {
 		const result = spawnSync(coverageCommand, {
 			cwd,
@@ -81,16 +89,35 @@ export async function runCrapAudit({
 		(left, right) => right.crapScore - left.crapScore,
 	);
 	const failingRisks = sortedRisks.filter((risk) => risk.crapScore > maxScore);
+	const warningRisks =
+		warnScore === undefined
+			? []
+			: sortedRisks.filter(
+					(risk) => risk.crapScore > warnScore && risk.crapScore <= maxScore,
+				);
+	const warningSummary =
+		warnScore === undefined
+			? ""
+			: `, ${warningRisks.length} above ${warnScore} (warn)`;
 
 	console.log();
 	console.log(
-		`CRAP report: ${sortedRisks.length} functions checked, ${failingRisks.length} above ${maxScore}.`,
+		`CRAP report: ${sortedRisks.length} functions checked, ${failingRisks.length} above ${maxScore}${warningSummary}.`,
 	);
 
 	const printedRisks = all ? sortedRisks : sortedRisks.slice(0, limit);
 
 	for (const risk of printedRisks) {
-		console.log(formatRiskLine(risk));
+		console.log(
+			`${getRiskLevel(risk, { maxScore, warnScore })} ${formatRiskLine(risk)}`,
+		);
+	}
+
+	if (warningRisks.length > 0) {
+		console.error("");
+		console.error(
+			`CRAP warning: ${warningRisks.length} function(s) above ${warnScore}. Add coverage or simplify them before they cross ${maxScore}.`,
+		);
 	}
 
 	if (failingRisks.length > 0 && !reportOnly) {
@@ -102,6 +129,18 @@ export async function runCrapAudit({
 	}
 
 	return 0;
+}
+
+function getRiskLevel(risk, { maxScore, warnScore }) {
+	if (risk.crapScore > maxScore) {
+		return "FAIL";
+	}
+
+	if (warnScore !== undefined && risk.crapScore > warnScore) {
+		return "WARN";
+	}
+
+	return "  ok";
 }
 
 function shouldIncludePath(filePath, includes) {

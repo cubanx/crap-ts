@@ -38,6 +38,8 @@ test("parses direct audit flags", () => {
 		"--report-only",
 		"--max",
 		"40",
+		"--warn",
+		"35",
 	]);
 
 	assert.equal(options.command, "score");
@@ -46,6 +48,7 @@ test("parses direct audit flags", () => {
 	assert.equal(options.all, true);
 	assert.equal(options.reportOnly, true);
 	assert.equal(options.maxScore, 40);
+	assert.equal(options.warnScore, 35);
 });
 
 test("rejects non-numeric thresholds", () => {
@@ -68,6 +71,7 @@ test("loads default .crap-ts.json config", () => {
 			minLines: 3,
 			reportOnly: true,
 			skipCoverage: true,
+			warn: 35,
 		}),
 	);
 
@@ -83,6 +87,7 @@ test("loads default .crap-ts.json config", () => {
 	assert.equal(options.minLines, 3);
 	assert.equal(options.reportOnly, true);
 	assert.equal(options.skipCoverage, true);
+	assert.equal(options.warnScore, 35);
 });
 
 test("loads explicit config path", () => {
@@ -134,6 +139,30 @@ test("CLI flags override config values", () => {
 	assert.equal(options.coveragePath, "coverage/from-cli.json");
 	assert.deepEqual(options.includes, ["from-cli"]);
 	assert.equal(options.maxScore, 10);
+});
+
+test("metrics scoring warns without failing between warn and max-crap", async () => {
+	const messages = await captureConsole(async () => {
+		assert.equal(
+			await main([
+				"score",
+				"--metrics",
+				"fixtures/complexity-metrics.json",
+				"--coverage-file",
+				"fixtures/coverage-summary.json",
+				"--max-crap",
+				"1000",
+				"--warn",
+				"1",
+			]),
+			0,
+		);
+	});
+
+	assert.match(
+		messages.errors.join("\n"),
+		/CRAP warning: \d+ row\(s\) above 1\./,
+	);
 });
 
 async function captureConsole(callback) {

@@ -166,6 +166,72 @@ test("fails strict mode for an uncovered high-CRAP fixture", async () => {
 	assert.match(reportOnly.logs.join("\n"), /1 functions checked, 1 above 5/);
 });
 
+test("warns without failing when a score is between warn and max", async () => {
+	const messages = await captureConsole(() =>
+		runCrapAudit({
+			coveragePath: "fixtures/risky-coverage-final.json",
+			cwd: repoRoot,
+			maxScore: 100,
+			minLines: 1,
+			skipCoverage: true,
+			warnScore: 50,
+		}),
+	);
+
+	assert.equal(messages.result, 0);
+	assert.match(
+		messages.logs.join("\n"),
+		/1 functions checked, 0 above 100, 1 above 50 \(warn\)/,
+	);
+	assert.match(
+		messages.logs.join("\n"),
+		/^WARN fixtures\/risky.ts:1 \| riskyDecision/m,
+	);
+	assert.match(
+		messages.errors.join("\n"),
+		/CRAP warning: 1 function\(s\) above 50/,
+	);
+});
+
+test("marks failing rows when a score is above max", async () => {
+	const messages = await captureConsole(() =>
+		runCrapAudit({
+			coveragePath: "fixtures/risky-coverage-final.json",
+			cwd: repoRoot,
+			maxScore: 50,
+			minLines: 1,
+			skipCoverage: true,
+			warnScore: 25,
+		}),
+	);
+
+	assert.equal(messages.result, 1);
+	assert.match(messages.logs.join("\n"), /0 above 25 \(warn\)/);
+	assert.match(
+		messages.logs.join("\n"),
+		/^FAIL fixtures\/risky.ts:1 \| riskyDecision/m,
+	);
+	assert.doesNotMatch(messages.errors.join("\n"), /CRAP warning/);
+});
+
+test("rejects a warn threshold above max", async () => {
+	const messages = await captureConsole(() =>
+		runCrapAudit({
+			coveragePath: "fixtures/risky-coverage-final.json",
+			cwd: repoRoot,
+			maxScore: 25,
+			skipCoverage: true,
+			warnScore: 30,
+		}),
+	);
+
+	assert.equal(messages.result, 2);
+	assert.match(
+		messages.errors.join("\n"),
+		/warn \(30\) must not exceed max \(25\)/,
+	);
+});
+
 async function captureConsole(callback) {
 	const logs = [];
 	const errors = [];
