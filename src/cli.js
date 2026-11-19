@@ -32,6 +32,7 @@ Options:
   --min-lines <n>  Ignore functions shorter than this. Defaults to 10.
   --max <n>        Fail direct CRAP audit when any row is above this score. Defaults to 30.
   --max-crap <n>    Fail CRAP scoring when any row is above this score.
+  --warn <n>       Warn, without failing, when any row is above this score.
   --report-only    Print CRAP report without failing on threshold.
   --skip-coverage  Do not run the coverage command.
   --help           Show this help.
@@ -59,6 +60,7 @@ export function parseCliArgs(argv, { cwd = process.cwd() } = {}) {
 			"min-lines": { type: "string" },
 			"report-only": { type: "boolean" },
 			"skip-coverage": { type: "boolean" },
+			warn: { type: "string" },
 		},
 	});
 	const config =
@@ -81,6 +83,7 @@ export function parseCliArgs(argv, { cwd = process.cwd() } = {}) {
 			paths: positionals,
 			reportOnly: values["report-only"],
 			skipCoverage: values["skip-coverage"],
+			warnScore: parseOptionalNumber(values.warn, "--warn"),
 		}),
 	);
 }
@@ -122,6 +125,17 @@ async function runScore(options) {
 		return 2;
 	}
 
+	if (
+		options.maxCrap &&
+		options.warnScore !== undefined &&
+		options.warnScore > options.maxCrap
+	) {
+		console.error(
+			`CRAP warn (${options.warnScore}) must not exceed max-crap (${options.maxCrap}).`,
+		);
+		return 2;
+	}
+
 	const metrics = JSON.parse(readFileSync(options.metricsPath, "utf8"));
 	const coverageSummary = JSON.parse(
 		readFileSync(options.coveragePath, "utf8"),
@@ -130,8 +144,22 @@ async function runScore(options) {
 	const failingScores = options.maxCrap
 		? scores.filter((score) => score.crap > options.maxCrap)
 		: [];
+	const warningScores =
+		options.warnScore === undefined
+			? []
+			: scores.filter(
+					(score) =>
+						score.crap > options.warnScore &&
+						!(options.maxCrap && score.crap > options.maxCrap),
+				);
 
 	console.log(JSON.stringify(scores, null, 2));
+
+	if (warningScores.length > 0) {
+		console.error(
+			`CRAP warning: ${warningScores.length} row(s) above ${options.warnScore}.`,
+		);
+	}
 
 	if (failingScores.length > 0) {
 		console.error(
@@ -206,6 +234,7 @@ function normalizeConfig(config) {
 		minLines: parseConfigNumber(config.minLines, "minLines"),
 		reportOnly: config.reportOnly,
 		skipCoverage: config.skipCoverage,
+		warnScore: parseConfigNumber(config.warn, "warn"),
 	});
 }
 

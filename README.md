@@ -62,10 +62,15 @@ Put the long bits in `.crap-ts.json`:
   "coverageFile": "coverage/unit/coverage-final.json",
   "include": ["src"],
   "max": 30,
+  "warn": 25,
   "minLines": 10,
   "limit": 20
 }
 ```
+
+`warn` gives you an early heads-up: functions above 25 are flagged `WARN` and
+reported on stderr, but only scores above `max` fail the build. Leave it out to
+skip warnings.
 
 You can also compute CRAP scores from an external metrics file and coverage
 summary:
@@ -120,6 +125,8 @@ Options:
 - `--include <text>`: only analyze coverage files whose path contains this text.
 - `--limit <n>`: number of report rows to print. Defaults to `20`.
 - `--max <n>`: strict CRAP threshold for direct audit. Defaults to `30`.
+- `--warn <n>`: warn, without failing, when a score is above this. Must not
+  exceed `--max` (or `--max-crap` with `--metrics`). Off by default.
 - `--min-lines <n>`: ignore functions shorter than this. Defaults to `10`.
 - `--metrics <path>`: read complexity metrics from JSON.
 - `--report-only`: print CRAP results without failing on threshold.
@@ -147,6 +154,7 @@ Config files use camelCase keys:
   "all": false,
   "limit": 20,
   "max": 30,
+  "warn": 25,
   "minLines": 10,
   "reportOnly": false,
   "skipCoverage": false
