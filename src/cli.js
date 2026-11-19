@@ -125,6 +125,17 @@ async function runScore(options) {
 		return 2;
 	}
 
+	if (
+		options.maxCrap &&
+		options.warnScore !== undefined &&
+		options.warnScore > options.maxCrap
+	) {
+		console.error(
+			`CRAP warn (${options.warnScore}) must not exceed max-crap (${options.maxCrap}).`,
+		);
+		return 2;
+	}
+
 	const metrics = JSON.parse(readFileSync(options.metricsPath, "utf8"));
 	const coverageSummary = JSON.parse(
 		readFileSync(options.coveragePath, "utf8"),

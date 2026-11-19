@@ -165,6 +165,30 @@ test("metrics scoring warns without failing between warn and max-crap", async ()
 	);
 });
 
+test("metrics scoring rejects a warn threshold above max-crap", async () => {
+	const messages = await captureConsole(async () => {
+		assert.equal(
+			await main([
+				"score",
+				"--metrics",
+				"fixtures/complexity-metrics.json",
+				"--coverage-file",
+				"fixtures/coverage-summary.json",
+				"--max-crap",
+				"20",
+				"--warn",
+				"25",
+			]),
+			2,
+		);
+	});
+
+	assert.deepEqual(messages.errors, [
+		"CRAP warn (25) must not exceed max-crap (20).",
+	]);
+	assert.deepEqual(messages.logs, []);
+});
+
 async function captureConsole(callback) {
 	const logs = [];
 	const errors = [];

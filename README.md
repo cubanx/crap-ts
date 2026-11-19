@@ -126,7 +126,7 @@ Options:
 - `--limit <n>`: number of report rows to print. Defaults to `20`.
 - `--max <n>`: strict CRAP threshold for direct audit. Defaults to `30`.
 - `--warn <n>`: warn, without failing, when a score is above this. Must not
-  exceed `--max`. Off by default.
+  exceed `--max` (or `--max-crap` with `--metrics`). Off by default.
 - `--min-lines <n>`: ignore functions shorter than this. Defaults to `10`.
 - `--metrics <path>`: read complexity metrics from JSON.
 - `--report-only`: print CRAP results without failing on threshold.
