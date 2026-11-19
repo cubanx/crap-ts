@@ -4,109 +4,73 @@ import { basename, join } from "node:path";
 
 import ts from "typescript";
 
-import { calculateCrapScoreFromPercent } from "./crap-score.js";
+import { calculateCrapScore } from "./crap-score.js";
 
-export function extractCoverageFunctions(coverageJson) {
-	const coverageByFile = new Map();
-
-	for (const [filePath, coverage] of Object.entries(coverageJson)) {
-		const functions = Object.entries(coverage.fnMap ?? {}).flatMap(
-			([id, metadata]) => {
-				const startLine = metadata.loc?.start?.line;
-				const endLine = metadata.loc?.end?.line;
-
-				if (!startLine || !endLine) {
-					return [];
-				}
-
-				return [
-					{
-						coveragePercent: (coverage.f?.[id] ?? 0) > 0 ? 100 : 0,
-						declarationLine: metadata.line ?? startLine,
-						endLine,
-						startLine,
-					},
-				];
-			},
-		);
-
-		coverageByFile.set(filePath, functions);
-	}
-
-	return coverageByFile;
-}
+// TypeScript 7 has no `createSourceFile`; its AST lives behind the unstable API.
+const ts7Ast = ts.createSourceFile
+	? null
+	: await import("typescript/unstable/ast");
+const defaultAdapter = ts7Ast
+	? { SyntaxKind: ts7Ast.SyntaxKind, forEachChild: forEachTs7Child }
+	: { SyntaxKind: ts.SyntaxKind, forEachChild: ts.forEachChild };
 
 export async function analyzeFileRisk({
-	coverageFunctions,
+	coverage,
 	filePath,
-	minLines,
+	minLines = 1,
 	sourceFilePath,
 	sourceText,
 }) {
-	const adapter = await getTypescriptAdapter({
+	const { functions } = await analyzeSource({
+		coverage,
 		filePath,
 		sourceFilePath,
 		sourceText,
 	});
-	const { sourceFile } = adapter;
-	const risks = [];
 
-	function visit(node) {
-		if (isFunctionLikeNode(adapter, node) && node.body) {
-			const startLine =
-				sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile))
-					.line + 1;
-			const endLine =
-				sourceFile.getLineAndCharacterOfPosition(node.getEnd()).line + 1;
-			const lineCount = endLine - startLine + 1;
+	return functions.filter((risk) => risk.lineCount >= minLines);
+}
 
-			if (lineCount >= minLines) {
-				const complexity = calculateCyclomaticComplexity(node.body, adapter);
-				const coveragePercent = getFunctionCoveragePercent({
-					coverageFunctions,
-					endLine,
-					startLine,
-				});
+export async function analyzeSource({
+	coverage,
+	filePath,
+	sourceFilePath,
+	sourceText,
+}) {
+	const sourceFile = await parseSourceFile({
+		filePath,
+		sourceFilePath,
+		sourceText,
+	});
+	const adapter = { ...defaultAdapter, sourceFile };
+	const functions = collectFunctions(adapter, filePath);
 
-				risks.push({
-					complexity,
-					coveragePercent,
-					crapScore: calculateCrapScoreFromPercent(complexity, coveragePercent),
-					endLine,
-					filePath,
-					lineCount,
-					name: getFunctionName(adapter, node, sourceFile),
-					startLine,
-				});
-			}
-		}
-
-		adapter.forEachChild(node, visit);
+	if (coverage) {
+		assertStatementsInSource(coverage, sourceText, filePath);
+		assignStatementCoverage(functions, coverage);
 	}
 
-	visit(sourceFile);
-
-	return risks;
+	return {
+		executable: functions.length > 0 || hasExecutableModuleStatements(adapter),
+		functions: functions.map(({ risk }) => {
+			risk.crapScore = calculateCrapScore({
+				complexity: risk.complexity,
+				coverage: risk.coveragePercent,
+			});
+			return risk;
+		}),
+	};
 }
 
-export function formatRiskLine(risk) {
-	return [
-		`${risk.filePath}:${risk.startLine}`,
-		risk.name,
-		`CRAP ${risk.crapScore.toFixed(1)}`,
-		`complexity ${risk.complexity}`,
-		`coverage ${risk.coveragePercent.toFixed(0)}%`,
-		`${risk.lineCount} lines`,
-	].join(" | ");
-}
-
-export function calculateCyclomaticComplexity(
-	node,
-	adapter = getDefaultComplexityAdapter(),
-) {
+export function calculateCyclomaticComplexity(node, adapter = defaultAdapter) {
 	let complexity = 1;
 
 	function visit(child) {
+		// Nested functions get their own rows; never charge their decisions here.
+		if (isFunctionLikeNode(adapter, child)) {
+			return;
+		}
+
 		if (addsDecisionPath(adapter, child)) {
 			complexity += 1;
 		}
@@ -114,163 +78,232 @@ export function calculateCyclomaticComplexity(
 		adapter.forEachChild(child, visit);
 	}
 
-	visit(node);
+	if (isFunctionLikeNode(adapter, node)) {
+		adapter.forEachChild(node, visit);
+	} else {
+		visit(node);
+	}
 
 	return complexity;
 }
 
-function addsDecisionPath(adapter, node) {
-	if (
-		adapter.isIfStatement(node) ||
-		adapter.isForStatement(node) ||
-		adapter.isForInStatement(node) ||
-		adapter.isForOfStatement(node) ||
-		adapter.isWhileStatement(node) ||
-		adapter.isDoStatement(node) ||
-		adapter.isCaseClause(node) ||
-		adapter.isCatchClause(node) ||
-		adapter.isConditionalExpression(node)
-	) {
-		return true;
+function addsDecisionPath({ SyntaxKind }, node) {
+	switch (node.kind) {
+		case SyntaxKind.IfStatement:
+		case SyntaxKind.ConditionalExpression:
+		case SyntaxKind.ForStatement:
+		case SyntaxKind.ForInStatement:
+		case SyntaxKind.ForOfStatement:
+		case SyntaxKind.WhileStatement:
+		case SyntaxKind.DoStatement:
+		case SyntaxKind.CaseClause:
+		case SyntaxKind.CatchClause:
+			return true;
+		case SyntaxKind.BinaryExpression:
+			return [
+				SyntaxKind.AmpersandAmpersandToken,
+				SyntaxKind.BarBarToken,
+				SyntaxKind.QuestionQuestionToken,
+				SyntaxKind.AmpersandAmpersandEqualsToken,
+				SyntaxKind.BarBarEqualsToken,
+				SyntaxKind.QuestionQuestionEqualsToken,
+			].includes(node.operatorToken.kind);
+		case SyntaxKind.Parameter:
+		case SyntaxKind.BindingElement:
+			return Boolean(node.initializer);
+		case SyntaxKind.ShorthandPropertyAssignment:
+			return Boolean(node.objectAssignmentInitializer);
+		default:
+			return false;
+	}
+}
+
+function collectFunctions(adapter, filePath) {
+	const { sourceFile } = adapter;
+	const functions = [];
+
+	function visit(node) {
+		if (isFunctionLikeNode(adapter, node) && node.body) {
+			const start = toPosition(sourceFile, node.getStart(sourceFile));
+			const end = toPosition(sourceFile, node.getEnd());
+
+			functions.push({
+				range: { end, start },
+				risk: {
+					complexity: calculateCyclomaticComplexity(node, adapter),
+					coveragePercent: 0,
+					coveredStatements: 0,
+					crapScore: 0,
+					endLine: end.line,
+					evidence: "missing",
+					filePath,
+					lineCount: end.line - start.line + 1,
+					name: getFunctionName(adapter, node),
+					startColumn: start.column + 1,
+					startLine: start.line,
+					statements: 0,
+				},
+			});
+		}
+
+		adapter.forEachChild(node, visit);
 	}
 
+	visit(sourceFile);
+
+	return functions;
+}
+
+function assignStatementCoverage(functions, coverage) {
+	for (const [id, location] of Object.entries(coverage.statementMap)) {
+		const owner = findOwner(functions, location.start);
+
+		// Module-level statements belong to no function row.
+		if (!owner) {
+			continue;
+		}
+
+		owner.risk.statements += 1;
+		owner.risk.coveredStatements += coverage.s[id] > 0 ? 1 : 0;
+	}
+
+	for (const fn of functions) {
+		const { risk } = fn;
+
+		if (risk.statements > 0) {
+			risk.coveragePercent = (risk.coveredStatements / risk.statements) * 100;
+			risk.evidence = "statements";
+			continue;
+		}
+
+		// A nested function's counter must never stand in for its parent's.
+		const ownedCounters = Object.entries(coverage.fnMap).filter(
+			([, metadata]) => findOwner(functions, metadata.loc.start) === fn,
+		);
+
+		if (ownedCounters.length === 1) {
+			const [[id]] = ownedCounters;
+			risk.coveragePercent = coverage.f[id] > 0 ? 100 : 0;
+			risk.evidence = "function";
+		}
+	}
+}
+
+// Functions are collected in preorder, so the last match is the innermost.
+function findOwner(functions, position) {
+	return functions.findLast((fn) => containsPosition(fn.range, position));
+}
+
+function containsPosition(range, position) {
 	return (
-		adapter.isBinaryExpression(node) &&
-		(node.operatorToken.kind === adapter.SyntaxKind.AmpersandAmpersandToken ||
-			node.operatorToken.kind === adapter.SyntaxKind.BarBarToken ||
-			node.operatorToken.kind === adapter.SyntaxKind.QuestionQuestionToken)
+		comparePositions(range.start, position) <= 0 &&
+		comparePositions(position, range.end) < 0
 	);
 }
 
-function getFunctionCoveragePercent({ coverageFunctions, endLine, startLine }) {
-	const exactMatch = coverageFunctions.find(
-		(coverageFunction) =>
-			coverageFunction.declarationLine === startLine ||
-			(coverageFunction.startLine === startLine &&
-				coverageFunction.endLine === endLine),
-	);
-
-	if (exactMatch) {
-		return exactMatch.coveragePercent;
-	}
-
-	const containingMatch = coverageFunctions.find(
-		(coverageFunction) =>
-			(coverageFunction.declarationLine >= startLine &&
-				coverageFunction.declarationLine <= endLine) ||
-			(coverageFunction.startLine <= endLine &&
-				coverageFunction.endLine >= startLine),
-	);
-
-	return containingMatch?.coveragePercent ?? 0;
+function comparePositions(left, right) {
+	return left.line - right.line || left.column - right.column;
 }
 
-function getFunctionName(adapter, node, sourceFile) {
-	if (
-		(adapter.isFunctionDeclaration(node) ||
-			adapter.isFunctionExpression(node)) &&
-		node.name
-	) {
-		return node.name.getText(sourceFile);
+function assertStatementsInSource(coverage, sourceText, filePath) {
+	const lines = sourceText.split("\n");
+
+	for (const { start } of Object.values(coverage.statementMap)) {
+		const line = lines[start.line - 1];
+
+		if (line === undefined || start.column > line.length) {
+			throw new Error(
+				`Coverage for ${filePath} does not match its current source (statement at ${start.line}:${start.column + 1}). Re-run coverage.`,
+			);
+		}
+	}
+}
+
+function hasExecutableModuleStatements({ SyntaxKind, sourceFile }) {
+	return sourceFile.statements.some((statement) => {
+		if (
+			statement.modifiers?.some(
+				(modifier) => modifier.kind === SyntaxKind.DeclareKeyword,
+			)
+		) {
+			return false;
+		}
+
+		switch (statement.kind) {
+			case SyntaxKind.ImportDeclaration:
+				// Side-effect imports (`import "./x"`) run code; binding imports do not.
+				return !statement.importClause;
+			case SyntaxKind.ExportDeclaration:
+			case SyntaxKind.InterfaceDeclaration:
+			case SyntaxKind.TypeAliasDeclaration:
+			case SyntaxKind.FunctionDeclaration:
+			case SyntaxKind.EmptyStatement:
+				return false;
+			default:
+				return true;
+		}
+	});
+}
+
+function toPosition(sourceFile, offset) {
+	const { character, line } = sourceFile.getLineAndCharacterOfPosition(offset);
+
+	return { column: character, line: line + 1 };
+}
+
+function getFunctionName({ SyntaxKind, sourceFile }, node) {
+	if (node.kind === SyntaxKind.Constructor) {
+		return "constructor";
 	}
 
-	if (adapter.isMethodDeclaration(node) && node.name) {
+	if (node.name) {
 		return node.name.getText(sourceFile);
 	}
 
 	const parent = node.parent;
 
-	if (adapter.isVariableDeclaration(parent) && parent.name) {
-		return parent.name.getText(sourceFile);
-	}
-
-	if (adapter.isPropertyAssignment(parent) && parent.name) {
+	if (
+		(parent?.kind === SyntaxKind.VariableDeclaration ||
+			parent?.kind === SyntaxKind.PropertyAssignment ||
+			parent?.kind === SyntaxKind.PropertyDeclaration) &&
+		parent.name
+	) {
 		return parent.name.getText(sourceFile);
 	}
 
 	return "<anonymous>";
 }
 
-function isFunctionLikeNode(adapter, node) {
-	return (
-		adapter.isFunctionDeclaration(node) ||
-		adapter.isFunctionExpression(node) ||
-		adapter.isArrowFunction(node) ||
-		adapter.isMethodDeclaration(node)
-	);
+function isFunctionLikeNode({ SyntaxKind }, node) {
+	switch (node.kind) {
+		case SyntaxKind.FunctionDeclaration:
+		case SyntaxKind.FunctionExpression:
+		case SyntaxKind.ArrowFunction:
+		case SyntaxKind.MethodDeclaration:
+		case SyntaxKind.Constructor:
+		case SyntaxKind.GetAccessor:
+		case SyntaxKind.SetAccessor:
+			return true;
+		default:
+			return false;
+	}
 }
 
-function getTs5Adapter() {
-	return {
-		...ts,
-		forEachChild: ts.forEachChild,
-	};
+function forEachTs7Child(node, visitor) {
+	ts7Ast.visitEachChild(node, visitor, null);
 }
 
-function getDefaultComplexityAdapter() {
-	if (ts.createSourceFile) {
-		return getTs5Adapter();
+async function parseSourceFile({ filePath, sourceFilePath, sourceText }) {
+	if (!ts7Ast) {
+		return ts.createSourceFile(
+			filePath,
+			sourceText,
+			ts.ScriptTarget.Latest,
+			true,
+		);
 	}
 
-	return getTs7NodeAdapter();
-}
-
-function getTs7NodeAdapter() {
-	return {
-		SyntaxKind: ts7SyntaxKind,
-		forEachChild(node, visitor) {
-			node.forEachChild?.(visitor);
-		},
-		isBinaryExpression: isSyntaxKind(ts7SyntaxKind.BinaryExpression),
-		isCaseClause: isSyntaxKind(ts7SyntaxKind.CaseClause),
-		isCatchClause: isSyntaxKind(ts7SyntaxKind.CatchClause),
-		isConditionalExpression: isSyntaxKind(ts7SyntaxKind.ConditionalExpression),
-		isDoStatement: isSyntaxKind(ts7SyntaxKind.DoStatement),
-		isForInStatement: isSyntaxKind(ts7SyntaxKind.ForInStatement),
-		isForOfStatement: isSyntaxKind(ts7SyntaxKind.ForOfStatement),
-		isForStatement: isSyntaxKind(ts7SyntaxKind.ForStatement),
-		isIfStatement: isSyntaxKind(ts7SyntaxKind.IfStatement),
-		isWhileStatement: isSyntaxKind(ts7SyntaxKind.WhileStatement),
-	};
-}
-
-function isSyntaxKind(kind) {
-	return (node) => node?.kind === kind;
-}
-
-const ts7SyntaxKind = {
-	AmpersandAmpersandToken: 55,
-	BarBarToken: 56,
-	BinaryExpression: 227,
-	CaseClause: 297,
-	CatchClause: 300,
-	ConditionalExpression: 228,
-	DoStatement: 247,
-	ForInStatement: 250,
-	ForOfStatement: 251,
-	ForStatement: 249,
-	IfStatement: 246,
-	QuestionQuestionToken: 60,
-	WhileStatement: 248,
-};
-
-async function getTypescriptAdapter({ filePath, sourceFilePath, sourceText }) {
-	if (ts.createSourceFile) {
-		return {
-			...getTs5Adapter(),
-			sourceFile: ts.createSourceFile(
-				filePath,
-				sourceText,
-				ts.ScriptTarget.Latest,
-				true,
-			),
-		};
-	}
-
-	const [{ API }, ast] = await Promise.all([
-		import("typescript/unstable/sync"),
-		import("typescript/unstable/ast"),
-	]);
+	const { API } = await import("typescript/unstable/sync");
 	const temporaryDirectory = mkdtempSync(join(tmpdir(), "crap-ts-"));
 	const resolvedPath = join(
 		temporaryDirectory,
@@ -290,13 +323,7 @@ async function getTypescriptAdapter({ filePath, sourceFilePath, sourceText }) {
 			throw new Error(`Unable to parse TypeScript source file: ${filePath}`);
 		}
 
-		return {
-			...ast,
-			forEachChild(node, visitor) {
-				ast.visitEachChild(node, visitor, null);
-			},
-			sourceFile,
-		};
+		return sourceFile;
 	} finally {
 		api.close();
 

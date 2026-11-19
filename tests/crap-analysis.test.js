@@ -3,100 +3,186 @@ import { test } from "node:test";
 import ts from "typescript";
 import {
 	analyzeFileRisk,
+	analyzeSource,
 	calculateCyclomaticComplexity,
-	extractCoverageFunctions,
-	formatRiskLine,
 } from "../src/crap-analysis.js";
 
-test("extracts function coverage from Istanbul coverage-final data", () => {
-	const coverage = extractCoverageFunctions({
-		"/tmp/example.ts": {
-			f: { 0: 1, 1: 0 },
-			fnMap: {
-				0: { loc: { end: { line: 4 }, start: { line: 1 } } },
-				1: { loc: { end: { line: 10 }, start: { line: 6 } } },
-			},
-		},
-	});
-
-	assert.deepEqual(coverage.get("/tmp/example.ts"), [
-		{ coveragePercent: 100, declarationLine: 1, endLine: 4, startLine: 1 },
-		{ coveragePercent: 0, declarationLine: 6, endLine: 10, startLine: 6 },
-	]);
+const location = (line, start = 0, end = 100) => ({
+	end: { column: end, line },
+	start: { column: start, line },
 });
 
-test("skips coverage functions with missing locations", () => {
-	const coverage = extractCoverageFunctions({
-		"/tmp/example.ts": {
+function coverage({ fnMap = {}, f = {}, statements = [] } = {}) {
+	return {
+		f,
+		fnMap,
+		s: Object.fromEntries(statements.map(([, count], id) => [id, count])),
+		statementMap: Object.fromEntries(statements.map(([loc], id) => [id, loc])),
+	};
+}
+
+test("maps owned statement counters to function coverage", async () => {
+	const [risk] = await analyzeFileRisk({
+		coverage: coverage({
+			statements: [
+				[location(2, 1, 21), 1],
+				[location(3, 1, 10), 0],
+			],
+		}),
+		filePath: "sisko.ts",
+		sourceText:
+			"function sisko(ready: boolean) {\n if (ready) return 1;\n return 0;\n}",
+	});
+
+	assert.equal(risk.name, "sisko");
+	assert.equal(risk.complexity, 2);
+	assert.equal(risk.coveragePercent, 50);
+	assert.equal(risk.crapScore, 2.5);
+	assert.equal(risk.statements, 2);
+	assert.equal(risk.coveredStatements, 1);
+	assert.equal(risk.evidence, "statements");
+	assert.equal(risk.startLine, 1);
+	assert.equal(risk.startColumn, 1);
+});
+
+test("isolates nested function complexity and statement ownership", async () => {
+	const risks = await analyzeFileRisk({
+		coverage: coverage({
+			statements: [
+				[location(3, 1, 10), 1],
+				[location(4, 1, 10), 0],
+				[location(6, 1, 10), 1],
+			],
+		}),
+		filePath: "sisko.ts",
+		sourceText:
+			"function sisko() {\n function dax() {\n if (true) return 1;\n return 0;\n }\n return dax();\n}",
+	});
+
+	assert.deepEqual(
+		risks.map(({ complexity, coveragePercent, name }) => ({
+			complexity,
+			coveragePercent,
+			name,
+		})),
+		[
+			{ complexity: 1, coveragePercent: 100, name: "sisko" },
+			{ complexity: 2, coveragePercent: 50, name: "dax" },
+		],
+	);
+});
+
+test("falls back to the function counter when a function owns no statements", async () => {
+	const [risk] = await analyzeFileRisk({
+		coverage: coverage({
 			f: { 0: 1 },
-			fnMap: {
-				0: {},
-			},
-		},
+			fnMap: { 0: { loc: location(1, 15, 17) } },
+		}),
+		filePath: "dax.ts",
+		sourceText: "function dax() {}",
 	});
 
-	assert.deepEqual(coverage.get("/tmp/example.ts"), []);
+	assert.equal(risk.coveragePercent, 100);
+	assert.equal(risk.evidence, "function");
 });
 
-test("analyzes complex uncovered functions", async () => {
-	const risks = await analyzeFileRisk({
-		coverageFunctions: [
-			{ coveragePercent: 0, declarationLine: 2, endLine: 13, startLine: 2 },
-		],
-		filePath: "/tmp/example.ts",
-		minLines: 1,
-		sourceText: `
-function choose(value) {
-  if (value > 10) {
-    return "big";
-  }
-
-  if (value > 0 && value < 5) {
-    return "small";
-  }
-
-  return "other";
-}
-`,
+test("never uses a nested function's counter for its parent", async () => {
+	const [parent, child] = await analyzeFileRisk({
+		coverage: coverage({
+			f: { 0: 1 },
+			fnMap: { 0: { loc: location(1, 30, 32) } },
+		}),
+		filePath: "odo.ts",
+		sourceText: "function odo() { return () => {}; }",
 	});
 
-	assert.equal(risks[0].complexity, 4);
-	assert.equal(risks[0].coveragePercent, 0);
-	assert.equal(risks[0].name, "choose");
+	assert.equal(parent.evidence, "missing");
+	assert.equal(child.evidence, "function");
 });
 
-test("uses containing coverage match when exact lines differ", async () => {
-	const risks = await analyzeFileRisk({
-		coverageFunctions: [
-			{ coveragePercent: 100, declarationLine: 1, endLine: 8, startLine: 1 },
-		],
-		filePath: "/tmp/example.ts",
-		minLines: 1,
-		sourceText: `
-const choose = (value) => {
-  if (value) {
-    return "yes";
-  }
-
-  return "no";
-}
-`,
+test("keeps uninstrumented functions visible with pessimistic risk", async () => {
+	const [risk] = await analyzeFileRisk({
+		filePath: "quark.ts",
+		sourceText: "const quark = (latinum: boolean) => latinum ? 1 : 0;",
 	});
 
-	assert.equal(risks[0].coveragePercent, 100);
-	assert.equal(risks[0].name, "choose");
+	assert.equal(risk.name, "quark");
+	assert.equal(risk.complexity, 2);
+	assert.equal(risk.coveragePercent, 0);
+	assert.equal(risk.crapScore, 6);
+	assert.equal(risk.evidence, "missing");
 });
 
-test("names methods and anonymous functions", async () => {
+test("rejects coverage that does not match the current source", async () => {
+	await assert.rejects(
+		analyzeFileRisk({
+			coverage: coverage({ statements: [[location(9, 1, 10), 1]] }),
+			filePath: "garak.ts",
+			sourceText: "function garak() {\n return 1;\n}",
+		}),
+		/Coverage for garak\.ts does not match its current source/,
+	);
+});
+
+test("counts loops, catches, switch cases, logical operators and defaults", async () => {
+	const [risk] = await analyzeFileRisk({
+		filePath: "odo.ts",
+		sourceText:
+			"function odo(a = 1) { try { for (;a;) { if ((a && a || a) ?? a) a--; } switch(a) { case 1: break; default: break; } } catch { return 0; } }",
+	});
+
+	assert.equal(risk.complexity, 9);
+});
+
+test("counts logical assignment and destructuring defaults", async () => {
+	const [risk] = await analyzeFileRisk({
+		filePath: "kira.ts",
+		sourceText: `function kira(options, [first = 0] = []) {
+	const { rank = "major" } = options;
+	({ sector = 1 } = options);
+	options.a &&= 1;
+	options.b ||= 2;
+	options.c ??= 3;
+}`,
+	});
+
+	// 1 + param default + array default + rank + sector + three assignments.
+	assert.equal(risk.complexity, 8);
+});
+
+test("does not count else, finally, optional chaining or type-level conditionals", async () => {
+	const [risk] = await analyzeFileRisk({
+		filePath: "bashir.ts",
+		sourceText: `function bashir(patient?: { name?: string }) {
+	type Name<T> = T extends string ? T : never;
+	if (patient?.name) {
+		return patient.name;
+	} else {
+		try {
+			return "unknown";
+		} finally {
+			patient = undefined;
+		}
+	}
+}`,
+	});
+
+	assert.equal(risk.complexity, 2);
+});
+
+test("names methods, constructors, accessors and anonymous functions", async () => {
 	const risks = await analyzeFileRisk({
-		coverageFunctions: [],
-		filePath: "/tmp/example.ts",
-		minLines: 1,
+		filePath: "station.ts",
 		sourceText: `
-class Example {
-  method(value) {
+class Station {
+  constructor(private sector: number) {}
+  get name() { return "Deep Space Nine"; }
+  set name(value) {}
+  dock(value) {
     return value ? "yes" : "no";
   }
+  overload(): void;
+  overload() {}
 }
 
 export default function (value) {
@@ -107,11 +193,52 @@ export default function (value) {
 
 	assert.deepEqual(
 		risks.map((risk) => risk.name),
-		["method", "<anonymous>"],
+		["constructor", "name", "name", "dock", "overload", "<anonymous>"],
 	);
 });
 
-test("counts common cyclomatic decision paths", () => {
+test("filters rows below minLines but keeps ownership for short functions", async () => {
+	const risks = await analyzeFileRisk({
+		coverage: coverage({
+			statements: [
+				[location(2, 1, 33), 1],
+				[location(2, 21, 30), 0],
+				[location(3, 1, 10), 0],
+			],
+		}),
+		filePath: "rom.ts",
+		minLines: 3,
+		sourceText:
+			"function rom() {\n const nog = () => { return 1; };\n return nog;\n}",
+	});
+
+	assert.equal(risks.length, 1);
+	assert.equal(risks[0].name, "rom");
+	// The filtered `nog` arrow still owns its `return 1` statement.
+	assert.equal(risks[0].statements, 2);
+});
+
+test("classifies declaration-only modules as not executable", async () => {
+	const executable = async (sourceText) =>
+		(await analyzeSource({ filePath: "module.ts", sourceText })).executable;
+
+	assert.equal(await executable('export { worf } from "./klingon";'), false);
+	assert.equal(await executable('export type { Rank } from "./types";'), false);
+	assert.equal(
+		await executable("export declare const station: string;"),
+		false,
+	);
+	assert.equal(await executable('import { helper } from "./helper";'), false);
+	assert.equal(
+		await executable("export interface Odo { form: string }"),
+		false,
+	);
+	assert.equal(await executable('import "./runtime-side-effect";'), true);
+	assert.equal(await executable("const plugin = registerGuard();"), true);
+	assert.equal(await executable("function untested() { return true; }"), true);
+});
+
+test("calculates complexity for a function body node", () => {
 	const sourceFile = ts.createSourceFile(
 		"/tmp/example.ts",
 		`
@@ -130,29 +257,13 @@ function choose(value, list) {
     }
   }
 
-  return "none";
+  return list.map((entry) => entry ? 1 : 0);
 }
 `,
 		ts.ScriptTarget.Latest,
 		true,
 	);
-	const functionBody = sourceFile.statements[0].body;
 
-	assert.equal(calculateCyclomaticComplexity(functionBody), 9);
-});
-
-test("formats a risk line for terminal reports", () => {
-	assert.equal(
-		formatRiskLine({
-			complexity: 4,
-			coveragePercent: 0,
-			crapScore: 20,
-			endLine: 12,
-			filePath: "src/example.ts",
-			lineCount: 11,
-			name: "choose",
-			startLine: 2,
-		}),
-		"src/example.ts:2 | choose | CRAP 20.0 | complexity 4 | coverage 0% | 11 lines",
-	);
+	assert.equal(calculateCyclomaticComplexity(sourceFile.statements[0].body), 9);
+	assert.equal(calculateCyclomaticComplexity(sourceFile.statements[0]), 9);
 });

@@ -17,6 +17,7 @@ Smaller changes are easier to deal with, larger changes may require more discuss
 Run these before opening a PR:
 
 ```sh
+npm run lint
 npm run check
 npm run validate
 ```
