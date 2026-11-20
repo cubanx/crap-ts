@@ -1,33 +1,54 @@
+interface SourcePosition {
+	line: number;
+	column: number;
+}
+
+interface SourceRange {
+	start: SourcePosition;
+	end: { line: number; column: number | null };
+}
+
+/** One file's entry from an Istanbul `coverage-final.json`. Branch data is ignored. */
+export interface FileCoverage {
+	statementMap: Record<string, SourceRange>;
+	s: Record<string, number>;
+	fnMap: Record<string, { loc: SourceRange }>;
+	f: Record<string, number>;
+}
+
 export interface FunctionRisk {
-	complexity: number;
-	coveragePercent: number;
-	crapScore: number;
-	endLine: number;
 	filePath: string;
-	lineCount: number;
 	name: string;
+	/** One-based line of the function's first token. */
 	startLine: number;
-}
-
-export interface CoverageFunction {
-	coveragePercent: number;
-	declarationLine: number;
+	/** One-based column of the function's first token. */
+	startColumn: number;
 	endLine: number;
-	startLine: number;
+	lineCount: number;
+	complexity: number;
+	/** Percentage in [0, 100]. */
+	coveragePercent: number;
+	/** Statements whose start lies in this function and not in a nested one. */
+	statements: number;
+	coveredStatements: number;
+	/** `statements`: owned statement counters; `function`: the function's own counter (no owned statements); `ignored`: no counter, under a coverage ignore comment; `missing`: no counter and no ignore comment (no coverage entry, or added after the coverage run). */
+	evidence: "statements" | "function" | "ignored" | "missing";
+	crapScore: number;
 }
 
-export function extractCoverageFunctions(
-	coverageJson: Record<string, unknown>,
-): Map<string, CoverageFunction[]>;
-
+/**
+ * Score every function with a body in one source file.
+ * A function without counters (or without `coverage`) reports 0% coverage and
+ * `evidence: "missing"`, or `"ignored"` when a coverage ignore comment covers it.
+ */
 export function analyzeFileRisk(input: {
-	coverageFunctions: CoverageFunction[];
+	coverage?: FileCoverage;
 	filePath: string;
-	minLines: number;
+	/** Drop functions shorter than this many lines. Defaults to 1. */
+	minLines?: number;
 	sourceFilePath?: string;
 	sourceText: string;
 }): Promise<FunctionRisk[]>;
 
-export function formatRiskLine(risk: FunctionRisk): string;
-
+/** 1 plus one per decision point in `node`, excluding nested functions. */
 export function calculateCyclomaticComplexity(node: unknown): number;

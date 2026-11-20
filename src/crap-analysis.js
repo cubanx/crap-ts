@@ -4,109 +4,81 @@ import { basename, join } from "node:path";
 
 import ts from "typescript";
 
-import { calculateCrapScoreFromPercent } from "./crap-score.js";
+import { calculateCrapScore } from "./crap-score.js";
 
-export function extractCoverageFunctions(coverageJson) {
-	const coverageByFile = new Map();
-
-	for (const [filePath, coverage] of Object.entries(coverageJson)) {
-		const functions = Object.entries(coverage.fnMap ?? {}).flatMap(
-			([id, metadata]) => {
-				const startLine = metadata.loc?.start?.line;
-				const endLine = metadata.loc?.end?.line;
-
-				if (!startLine || !endLine) {
-					return [];
-				}
-
-				return [
-					{
-						coveragePercent: (coverage.f?.[id] ?? 0) > 0 ? 100 : 0,
-						declarationLine: metadata.line ?? startLine,
-						endLine,
-						startLine,
-					},
-				];
-			},
-		);
-
-		coverageByFile.set(filePath, functions);
-	}
-
-	return coverageByFile;
-}
+// TypeScript 7 has no `createSourceFile`; its AST lives behind the unstable API.
+const ts7Ast = ts.createSourceFile
+	? null
+	: await import("typescript/unstable/ast");
+const defaultAdapter = ts7Ast
+	? { SyntaxKind: ts7Ast.SyntaxKind, forEachChild: forEachTs7Child }
+	: { SyntaxKind: ts.SyntaxKind, forEachChild: ts.forEachChild };
 
 export async function analyzeFileRisk({
-	coverageFunctions,
+	coverage,
 	filePath,
-	minLines,
+	minLines = 1,
 	sourceFilePath,
 	sourceText,
 }) {
-	const adapter = await getTypescriptAdapter({
+	const { functions } = await analyzeSource({
+		coverage,
 		filePath,
 		sourceFilePath,
 		sourceText,
 	});
-	const { sourceFile } = adapter;
-	const risks = [];
 
-	function visit(node) {
-		if (isFunctionLikeNode(adapter, node) && node.body) {
-			const startLine =
-				sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile))
-					.line + 1;
-			const endLine =
-				sourceFile.getLineAndCharacterOfPosition(node.getEnd()).line + 1;
-			const lineCount = endLine - startLine + 1;
+	return functions.filter((risk) => risk.lineCount >= minLines);
+}
 
-			if (lineCount >= minLines) {
-				const complexity = calculateCyclomaticComplexity(node.body, adapter);
-				const coveragePercent = getFunctionCoveragePercent({
-					coverageFunctions,
-					endLine,
-					startLine,
-				});
+export async function analyzeSource({
+	coverage,
+	filePath,
+	sourceFilePath,
+	sourceText,
+}) {
+	const sourceFile = await parseSourceFile({
+		filePath,
+		sourceFilePath,
+		sourceText,
+	});
+	const adapter = { ...defaultAdapter, sourceFile };
+	const ignore = findIgnoreComments(sourceText, collectLiteralRanges(adapter));
+	const functions = collectFunctions(adapter, filePath, ignore);
 
-				risks.push({
-					complexity,
-					coveragePercent,
-					crapScore: calculateCrapScoreFromPercent(complexity, coveragePercent),
-					endLine,
-					filePath,
-					lineCount,
-					name: getFunctionName(adapter, node, sourceFile),
-					startLine,
-				});
-			}
-		}
-
-		adapter.forEachChild(node, visit);
+	if (coverage) {
+		assertStatementsInSource(coverage, sourceText, filePath);
+		assignStatementCoverage(functions, coverage);
 	}
 
-	visit(sourceFile);
+	return {
+		executable:
+			!ignore.file &&
+			(functions.length > 0 || hasExecutableModuleStatements(adapter)),
+		functions: functions.map(({ ignored, risk }) => {
+			// No counters is only acceptable where an ignore comment removed them.
+			if (ignored && risk.evidence === "missing") {
+				risk.evidence = "ignored";
+			}
 
-	return risks;
+			risk.crapScore = calculateCrapScore({
+				complexity: risk.complexity,
+				coverage: risk.coveragePercent,
+			});
+			return risk;
+		}),
+	};
 }
 
-export function formatRiskLine(risk) {
-	return [
-		`${risk.filePath}:${risk.startLine}`,
-		risk.name,
-		`CRAP ${risk.crapScore.toFixed(1)}`,
-		`complexity ${risk.complexity}`,
-		`coverage ${risk.coveragePercent.toFixed(0)}%`,
-		`${risk.lineCount} lines`,
-	].join(" | ");
-}
-
-export function calculateCyclomaticComplexity(
-	node,
-	adapter = getDefaultComplexityAdapter(),
-) {
+export function calculateCyclomaticComplexity(node, adapter = defaultAdapter) {
 	let complexity = 1;
 
 	function visit(child) {
+		// Nested functions get their own rows; never charge their decisions here.
+		if (isFunctionLikeNode(adapter, child)) {
+			return;
+		}
+
 		if (addsDecisionPath(adapter, child)) {
 			complexity += 1;
 		}
@@ -114,163 +86,470 @@ export function calculateCyclomaticComplexity(
 		adapter.forEachChild(child, visit);
 	}
 
-	visit(node);
+	if (isFunctionLikeNode(adapter, node)) {
+		adapter.forEachChild(node, visit);
+	} else {
+		visit(node);
+	}
 
 	return complexity;
 }
 
-function addsDecisionPath(adapter, node) {
-	if (
-		adapter.isIfStatement(node) ||
-		adapter.isForStatement(node) ||
-		adapter.isForInStatement(node) ||
-		adapter.isForOfStatement(node) ||
-		adapter.isWhileStatement(node) ||
-		adapter.isDoStatement(node) ||
-		adapter.isCaseClause(node) ||
-		adapter.isCatchClause(node) ||
-		adapter.isConditionalExpression(node)
-	) {
-		return true;
+function addsDecisionPath({ SyntaxKind }, node) {
+	switch (node.kind) {
+		case SyntaxKind.IfStatement:
+		case SyntaxKind.ConditionalExpression:
+		case SyntaxKind.ForStatement:
+		case SyntaxKind.ForInStatement:
+		case SyntaxKind.ForOfStatement:
+		case SyntaxKind.WhileStatement:
+		case SyntaxKind.DoStatement:
+		case SyntaxKind.CaseClause:
+		case SyntaxKind.CatchClause:
+			return true;
+		case SyntaxKind.BinaryExpression:
+			return [
+				SyntaxKind.AmpersandAmpersandToken,
+				SyntaxKind.BarBarToken,
+				SyntaxKind.QuestionQuestionToken,
+				SyntaxKind.AmpersandAmpersandEqualsToken,
+				SyntaxKind.BarBarEqualsToken,
+				SyntaxKind.QuestionQuestionEqualsToken,
+			].includes(node.operatorToken.kind);
+		case SyntaxKind.Parameter:
+		case SyntaxKind.BindingElement:
+			return Boolean(node.initializer);
+		case SyntaxKind.ShorthandPropertyAssignment:
+			return Boolean(node.objectAssignmentInitializer);
+		default:
+			return false;
+	}
+}
+
+function collectFunctions(adapter, filePath, ignore) {
+	const { SyntaxKind, sourceFile } = adapter;
+	const functions = [];
+
+	function visit(node) {
+		const start = toPosition(sourceFile, node.getStart(sourceFile));
+
+		const targetKey = positionKey(start);
+		const directive = ignore.nextTargets.get(targetKey);
+
+		// An `ignore next|if|else` comment applies to the outermost node after it.
+		if (directive && node.kind !== SyntaxKind.SourceFile) {
+			ignore.nextTargets.delete(targetKey);
+			const target =
+				directive === "next"
+					? node
+					: node.kind === SyntaxKind.IfStatement
+						? node[directive === "if" ? "thenStatement" : "elseStatement"]
+						: undefined;
+
+			if (target) {
+				ignore.ranges.push({
+					end: toPosition(sourceFile, target.getEnd()),
+					start: toPosition(sourceFile, target.getStart(sourceFile)),
+				});
+			}
+		}
+
+		if (isFunctionLikeNode(adapter, node) && node.body) {
+			const end = toPosition(sourceFile, node.getEnd());
+
+			functions.push({
+				bodyStart: toPosition(sourceFile, node.body.getStart(sourceFile)),
+				ignored: isIgnored(ignore, start),
+				range: { end, start },
+				risk: {
+					complexity: calculateCyclomaticComplexity(node, adapter),
+					coveragePercent: 0,
+					coveredStatements: 0,
+					crapScore: 0,
+					endLine: end.line,
+					evidence: "missing",
+					filePath,
+					lineCount: end.line - start.line + 1,
+					name: getFunctionName(adapter, node),
+					startColumn: start.column + 1,
+					startLine: start.line,
+					statements: 0,
+				},
+			});
+		}
+
+		adapter.forEachChild(node, visit);
 	}
 
+	visit(sourceFile);
+
+	return functions;
+}
+
+function assignStatementCoverage(functions, coverage) {
+	for (const [id, location] of Object.entries(coverage.statementMap)) {
+		const owner = findOwner(functions, location.start);
+
+		// Module-level statements belong to no function row.
+		if (!owner) {
+			continue;
+		}
+
+		owner.risk.statements += 1;
+		owner.risk.coveredStatements += coverage.s[id] > 0 ? 1 : 0;
+	}
+
+	const counterStarts = new Set(
+		Object.values(coverage.fnMap).map(({ loc }) => positionKey(loc.start)),
+	);
+	const countersByOwner = groupCountersBy(coverage.fnMap, (start) =>
+		findCounterOwner(functions, start, counterStarts),
+	);
+
+	for (const fn of functions) {
+		const { risk } = fn;
+
+		if (risk.statements > 0) {
+			risk.coveragePercent = (risk.coveredStatements / risk.statements) * 100;
+			risk.evidence = "statements";
+			continue;
+		}
+
+		const counters = countersByOwner.get(fn) ?? [];
+
+		if (counters.length === 1) {
+			risk.coveragePercent = coverage.f[counters[0]] > 0 ? 100 : 0;
+			risk.evidence = "function";
+		}
+	}
+}
+
+// Istanbul places a function counter at the function's body; per-line V8
+// converters place it at the function's first token. The two positions meet
+// only where an arrow is another arrow's expression body (`a => b => 1`):
+// there the outer arrow owns the counter, unless it has a first-token counter
+// of its own, which marks the V8 layout.
+function findCounterOwner(functions, start, counterStarts) {
+	const startingHere = functions.findLast(
+		(fn) => comparePositions(fn.range.start, start) === 0,
+	);
+
+	if (!startingHere) {
+		// A nested function's counter must never stand in for its parent's.
+		return findOwner(functions, start);
+	}
+
+	const parent = functions.find(
+		(fn) => comparePositions(fn.bodyStart, start) === 0,
+	);
+
+	return parent && !counterStarts.has(positionKey(parent.range.start))
+		? parent
+		: startingHere;
+}
+
+function groupCountersBy(fnMap, getFunction) {
+	const groups = new Map();
+
+	for (const [id, metadata] of Object.entries(fnMap)) {
+		const fn = getFunction(metadata.loc.start);
+
+		if (fn) {
+			groups.set(fn, [...(groups.get(fn) ?? []), id]);
+		}
+	}
+
+	return groups;
+}
+
+// Functions are collected in preorder, so the last match is the innermost.
+function findOwner(functions, position) {
+	return functions.findLast((fn) => containsPosition(fn.range, position));
+}
+
+// The start is exclusive: Istanbul places initializer counters and an outer
+// arrow's expression body at a function's first token, and those belong to
+// the enclosing scope.
+function containsPosition(range, position) {
 	return (
-		adapter.isBinaryExpression(node) &&
-		(node.operatorToken.kind === adapter.SyntaxKind.AmpersandAmpersandToken ||
-			node.operatorToken.kind === adapter.SyntaxKind.BarBarToken ||
-			node.operatorToken.kind === adapter.SyntaxKind.QuestionQuestionToken)
+		comparePositions(range.start, position) < 0 &&
+		comparePositions(position, range.end) < 0
 	);
 }
 
-function getFunctionCoveragePercent({ coverageFunctions, endLine, startLine }) {
-	const exactMatch = coverageFunctions.find(
-		(coverageFunction) =>
-			coverageFunction.declarationLine === startLine ||
-			(coverageFunction.startLine === startLine &&
-				coverageFunction.endLine === endLine),
-	);
+function comparePositions(left, right) {
+	return left.line - right.line || left.column - right.column;
+}
 
-	if (exactMatch) {
-		return exactMatch.coveragePercent;
+// The line terminators TypeScript and Babel recognise.
+const lineTerminatorPattern = /\r\n|[\n\r\u2028\u2029]/g;
+const commentPattern = /\/\*([\s\S]*?)\*\/|\/\/([^\n\r\u2028\u2029]*)/g;
+const ignoreDirectivePattern =
+	/^\s*(?:istanbul|v8|c8)\s+ignore\s+(next|if|else|start|stop|file)(?:\s+(\d+))?(?=\W|$)/;
+const triviaPattern = /(?:\s|\/\*[\s\S]*?\*\/|\/\/[^\n\r\u2028\u2029]*)*/y;
+
+// Coverage tools drop counters for code under these comments:
+// `istanbul|v8|c8 ignore next [lines]`, `ignore if|else`, `ignore start` … `ignore stop`,
+// `ignore file`.
+function findIgnoreComments(sourceText, literalRanges) {
+	const lineStarts = [0];
+
+	for (const match of sourceText.matchAll(lineTerminatorPattern)) {
+		lineStarts.push(match.index + match[0].length);
 	}
 
-	const containingMatch = coverageFunctions.find(
-		(coverageFunction) =>
-			(coverageFunction.declarationLine >= startLine &&
-				coverageFunction.declarationLine <= endLine) ||
-			(coverageFunction.startLine <= endLine &&
-				coverageFunction.endLine >= startLine),
-	);
+	const toSourcePosition = (offset) => {
+		const line = lineStarts.findLastIndex((lineStart) => lineStart <= offset);
+		return { column: offset - lineStarts[line], line: line + 1 };
+	};
+	const toOffset = ({ column, line }) => lineStarts[line - 1] + column;
+	const literals = literalRanges.map(({ end, start }) => ({
+		end: toOffset(end),
+		start: toOffset(start),
+	}));
+	const ignore = {
+		file: false,
+		lineRanges: [],
+		nextTargets: new Map(),
+		ranges: [],
+	};
+	let regionStart;
 
-	return containingMatch?.coveragePercent ?? 0;
-}
+	commentPattern.lastIndex = 0;
 
-function getFunctionName(adapter, node, sourceFile) {
-	if (
-		(adapter.isFunctionDeclaration(node) ||
-			adapter.isFunctionExpression(node)) &&
-		node.name
+	for (
+		let match = commentPattern.exec(sourceText);
+		match;
+		match = commentPattern.exec(sourceText)
 	) {
-		return node.name.getText(sourceFile);
+		const literal = literals.find(
+			({ end, start }) => start <= match.index && match.index < end,
+		);
+
+		// Comment-like text inside a literal is not a comment; resume after it.
+		if (literal) {
+			commentPattern.lastIndex = literal.end;
+			continue;
+		}
+
+		const directive = ignoreDirectivePattern.exec(match[1] ?? match[2]);
+
+		if (!directive) {
+			continue;
+		}
+
+		const [, kind, lineCount] = directive;
+		const commentEnd = match.index + match[0].length;
+
+		if (kind === "file") {
+			ignore.file = true;
+		} else if (kind === "start") {
+			regionStart ??= toSourcePosition(commentEnd);
+		} else if (kind === "stop" && regionStart) {
+			ignore.ranges.push({
+				end: toSourcePosition(match.index),
+				start: regionStart,
+			});
+			regionStart = undefined;
+		} else if (kind === "next" && lineCount) {
+			// c8 style: the next N lines.
+			const { line } = toSourcePosition(commentEnd);
+			ignore.lineRanges.push([line + 1, line + Number(lineCount)]);
+		} else if (kind === "next" || kind === "if" || kind === "else") {
+			triviaPattern.lastIndex = commentEnd;
+			triviaPattern.exec(sourceText);
+			ignore.nextTargets.set(
+				positionKey(toSourcePosition(triviaPattern.lastIndex)),
+				kind,
+			);
+		}
 	}
 
-	if (adapter.isMethodDeclaration(node) && node.name) {
+	if (regionStart) {
+		ignore.ranges.push({
+			end: { column: 0, line: Number.POSITIVE_INFINITY },
+			start: regionStart,
+		});
+	}
+
+	return ignore;
+}
+
+// Strings, templates, regex literals and JSX text can contain `/*` or `//`.
+function collectLiteralRanges(adapter) {
+	const { SyntaxKind, sourceFile } = adapter;
+	const literalKinds = new Set([
+		SyntaxKind.StringLiteral,
+		SyntaxKind.NoSubstitutionTemplateLiteral,
+		SyntaxKind.TemplateHead,
+		SyntaxKind.TemplateMiddle,
+		SyntaxKind.TemplateTail,
+		SyntaxKind.RegularExpressionLiteral,
+		SyntaxKind.JsxText,
+	]);
+	const ranges = [];
+
+	function visit(node) {
+		if (literalKinds.has(node.kind)) {
+			ranges.push({
+				end: toPosition(sourceFile, node.getEnd()),
+				// JSX text has no leading trivia; its full start is its text.
+				start: toPosition(
+					sourceFile,
+					node.kind === SyntaxKind.JsxText
+						? node.pos
+						: node.getStart(sourceFile),
+				),
+			});
+		}
+
+		adapter.forEachChild(node, visit);
+	}
+
+	visit(sourceFile);
+
+	return ranges;
+}
+
+function isIgnored(ignore, position) {
+	return (
+		ignore.file ||
+		ignore.ranges.some(
+			(range) =>
+				comparePositions(range.start, position) <= 0 &&
+				comparePositions(position, range.end) < 0,
+		) ||
+		ignore.lineRanges.some(
+			([first, last]) => position.line >= first && position.line <= last,
+		)
+	);
+}
+
+function positionKey({ column, line }) {
+	return `${line}:${column}`;
+}
+
+function assertStatementsInSource(coverage, sourceText, filePath) {
+	const lines = sourceText.split(lineTerminatorPattern);
+
+	for (const { start } of Object.values(coverage.statementMap)) {
+		const line = lines[start.line - 1];
+
+		if (line === undefined || start.column > line.length) {
+			throw new Error(
+				`Coverage for ${filePath} does not match its current source (statement at ${start.line}:${start.column + 1}). Re-run coverage.`,
+			);
+		}
+	}
+}
+
+function hasExecutableModuleStatements({ SyntaxKind, sourceFile }) {
+	return hasExecutableStatements(SyntaxKind, sourceFile.statements);
+}
+
+function hasExecutableStatements(SyntaxKind, statements) {
+	return statements.some((statement) => {
+		if (
+			statement.modifiers?.some(
+				(modifier) => modifier.kind === SyntaxKind.DeclareKeyword,
+			)
+		) {
+			return false;
+		}
+
+		switch (statement.kind) {
+			case SyntaxKind.ImportEqualsDeclaration:
+				return !statement.isTypeOnly;
+			case SyntaxKind.ImportDeclaration:
+				// Side-effect imports (`import "./x"`) run code; binding imports do not.
+				return !statement.importClause;
+			case SyntaxKind.ModuleDeclaration:
+				// TypeScript emits a namespace only when its body has runtime code.
+				return isExecutableNamespace(SyntaxKind, statement);
+			case SyntaxKind.ExportDeclaration:
+			case SyntaxKind.InterfaceDeclaration:
+			case SyntaxKind.TypeAliasDeclaration:
+			case SyntaxKind.FunctionDeclaration:
+			case SyntaxKind.EmptyStatement:
+				return false;
+			default:
+				return true;
+		}
+	});
+}
+
+function isExecutableNamespace(SyntaxKind, declaration) {
+	const { body } = declaration;
+
+	if (!body) {
+		return false;
+	}
+
+	// `namespace A.B {}` nests one ModuleDeclaration per name.
+	return body.kind === SyntaxKind.ModuleDeclaration
+		? isExecutableNamespace(SyntaxKind, body)
+		: hasExecutableStatements(SyntaxKind, body.statements);
+}
+
+function toPosition(sourceFile, offset) {
+	const { character, line } = sourceFile.getLineAndCharacterOfPosition(offset);
+
+	return { column: character, line: line + 1 };
+}
+
+function getFunctionName({ SyntaxKind, sourceFile }, node) {
+	if (node.kind === SyntaxKind.Constructor) {
+		return "constructor";
+	}
+
+	if (node.name) {
 		return node.name.getText(sourceFile);
 	}
 
 	const parent = node.parent;
 
-	if (adapter.isVariableDeclaration(parent) && parent.name) {
-		return parent.name.getText(sourceFile);
-	}
-
-	if (adapter.isPropertyAssignment(parent) && parent.name) {
+	if (
+		(parent?.kind === SyntaxKind.VariableDeclaration ||
+			parent?.kind === SyntaxKind.PropertyAssignment ||
+			parent?.kind === SyntaxKind.PropertyDeclaration) &&
+		parent.name
+	) {
 		return parent.name.getText(sourceFile);
 	}
 
 	return "<anonymous>";
 }
 
-function isFunctionLikeNode(adapter, node) {
-	return (
-		adapter.isFunctionDeclaration(node) ||
-		adapter.isFunctionExpression(node) ||
-		adapter.isArrowFunction(node) ||
-		adapter.isMethodDeclaration(node)
-	);
+function isFunctionLikeNode({ SyntaxKind }, node) {
+	switch (node.kind) {
+		case SyntaxKind.FunctionDeclaration:
+		case SyntaxKind.FunctionExpression:
+		case SyntaxKind.ArrowFunction:
+		case SyntaxKind.MethodDeclaration:
+		case SyntaxKind.Constructor:
+		case SyntaxKind.GetAccessor:
+		case SyntaxKind.SetAccessor:
+			return true;
+		default:
+			return false;
+	}
 }
 
-function getTs5Adapter() {
-	return {
-		...ts,
-		forEachChild: ts.forEachChild,
-	};
+function forEachTs7Child(node, visitor) {
+	ts7Ast.visitEachChild(node, visitor, null);
 }
 
-function getDefaultComplexityAdapter() {
-	if (ts.createSourceFile) {
-		return getTs5Adapter();
+async function parseSourceFile({ filePath, sourceFilePath, sourceText }) {
+	if (!ts7Ast) {
+		return ts.createSourceFile(
+			filePath,
+			sourceText,
+			ts.ScriptTarget.Latest,
+			true,
+		);
 	}
 
-	return getTs7NodeAdapter();
-}
-
-function getTs7NodeAdapter() {
-	return {
-		SyntaxKind: ts7SyntaxKind,
-		forEachChild(node, visitor) {
-			node.forEachChild?.(visitor);
-		},
-		isBinaryExpression: isSyntaxKind(ts7SyntaxKind.BinaryExpression),
-		isCaseClause: isSyntaxKind(ts7SyntaxKind.CaseClause),
-		isCatchClause: isSyntaxKind(ts7SyntaxKind.CatchClause),
-		isConditionalExpression: isSyntaxKind(ts7SyntaxKind.ConditionalExpression),
-		isDoStatement: isSyntaxKind(ts7SyntaxKind.DoStatement),
-		isForInStatement: isSyntaxKind(ts7SyntaxKind.ForInStatement),
-		isForOfStatement: isSyntaxKind(ts7SyntaxKind.ForOfStatement),
-		isForStatement: isSyntaxKind(ts7SyntaxKind.ForStatement),
-		isIfStatement: isSyntaxKind(ts7SyntaxKind.IfStatement),
-		isWhileStatement: isSyntaxKind(ts7SyntaxKind.WhileStatement),
-	};
-}
-
-function isSyntaxKind(kind) {
-	return (node) => node?.kind === kind;
-}
-
-const ts7SyntaxKind = {
-	AmpersandAmpersandToken: 55,
-	BarBarToken: 56,
-	BinaryExpression: 227,
-	CaseClause: 297,
-	CatchClause: 300,
-	ConditionalExpression: 228,
-	DoStatement: 247,
-	ForInStatement: 250,
-	ForOfStatement: 251,
-	ForStatement: 249,
-	IfStatement: 246,
-	QuestionQuestionToken: 60,
-	WhileStatement: 248,
-};
-
-async function getTypescriptAdapter({ filePath, sourceFilePath, sourceText }) {
-	if (ts.createSourceFile) {
-		return {
-			...getTs5Adapter(),
-			sourceFile: ts.createSourceFile(
-				filePath,
-				sourceText,
-				ts.ScriptTarget.Latest,
-				true,
-			),
-		};
-	}
-
-	const [{ API }, ast] = await Promise.all([
-		import("typescript/unstable/sync"),
-		import("typescript/unstable/ast"),
-	]);
+	const { API } = await import("typescript/unstable/sync");
 	const temporaryDirectory = mkdtempSync(join(tmpdir(), "crap-ts-"));
 	const resolvedPath = join(
 		temporaryDirectory,
@@ -290,13 +569,7 @@ async function getTypescriptAdapter({ filePath, sourceFilePath, sourceText }) {
 			throw new Error(`Unable to parse TypeScript source file: ${filePath}`);
 		}
 
-		return {
-			...ast,
-			forEachChild(node, visitor) {
-				ast.visitEachChild(node, visitor, null);
-			},
-			sourceFile,
-		};
+		return sourceFile;
 	} finally {
 		api.close();
 

@@ -6,16 +6,6 @@ import { test } from "node:test";
 
 import { main, parseCliArgs } from "../src/cli.js";
 
-test("score with metrics but no coverage file returns a usage error", async () => {
-	const messages = await captureConsole(async () => {
-		assert.equal(await main(["score", "--metrics", "missing.json"]), 2);
-	});
-
-	assert.deepEqual(messages.errors, [
-		"CRAP scoring requires both --metrics and --coverage-file.",
-	]);
-});
-
 test("help subcommand prints help", async () => {
 	const messages = await captureConsole(async () => {
 		assert.equal(await main(["help"]), 0);
@@ -40,11 +30,21 @@ test("parses direct audit flags", () => {
 		"40",
 		"--warn",
 		"35",
+		"--coverage-file",
+		"coverage/browser/coverage-final.json",
+		"--exclude",
+		".test.ts",
+		"--json",
 	]);
 
 	assert.equal(options.command, "score");
-	assert.equal(options.coveragePath, "coverage/unit/coverage-final.json");
+	assert.deepEqual(options.coveragePaths, [
+		"coverage/unit/coverage-final.json",
+		"coverage/browser/coverage-final.json",
+	]);
 	assert.deepEqual(options.includes, ["/app/", "/scripts/"]);
+	assert.deepEqual(options.excludes, [".test.ts"]);
+	assert.equal(options.json, true);
 	assert.equal(options.all, true);
 	assert.equal(options.reportOnly, true);
 	assert.equal(options.maxScore, 40);
@@ -64,8 +64,10 @@ test("loads default .crap-ts.json config", () => {
 		join(cwd, ".crap-ts.json"),
 		JSON.stringify({
 			coverageCommand: "npm run coverage",
-			coverageFile: "coverage/custom.json",
+			coverageFile: ["coverage/node.json", "coverage/browser.json"],
+			exclude: ".test.ts",
 			include: ["src", "scripts"],
+			json: true,
 			limit: 7,
 			max: 42,
 			minLines: 3,
@@ -80,8 +82,13 @@ test("loads default .crap-ts.json config", () => {
 	rmSync(cwd, { force: true, recursive: true });
 
 	assert.equal(options.coverageCommand, "npm run coverage");
-	assert.equal(options.coveragePath, "coverage/custom.json");
+	assert.deepEqual(options.coveragePaths, [
+		"coverage/node.json",
+		"coverage/browser.json",
+	]);
+	assert.deepEqual(options.excludes, [".test.ts"]);
 	assert.deepEqual(options.includes, ["src", "scripts"]);
+	assert.equal(options.json, true);
 	assert.equal(options.limit, 7);
 	assert.equal(options.maxScore, 42);
 	assert.equal(options.minLines, 3);
@@ -106,7 +113,7 @@ test("loads explicit config path", () => {
 
 	rmSync(cwd, { force: true, recursive: true });
 
-	assert.equal(options.coveragePath, "coverage/explicit.json");
+	assert.deepEqual(options.coveragePaths, ["coverage/explicit.json"]);
 	assert.deepEqual(options.includes, ["src"]);
 });
 
@@ -136,57 +143,48 @@ test("CLI flags override config values", () => {
 
 	rmSync(cwd, { force: true, recursive: true });
 
-	assert.equal(options.coveragePath, "coverage/from-cli.json");
+	assert.deepEqual(options.coveragePaths, ["coverage/from-cli.json"]);
 	assert.deepEqual(options.includes, ["from-cli"]);
 	assert.equal(options.maxScore, 10);
 });
 
-test("metrics scoring warns without failing between warn and max-crap", async () => {
+test("requires the score subcommand", async () => {
 	const messages = await captureConsole(async () => {
 		assert.equal(
-			await main([
-				"score",
-				"--metrics",
-				"fixtures/complexity-metrics.json",
-				"--coverage-file",
-				"fixtures/coverage-summary.json",
-				"--max-crap",
-				"1000",
-				"--warn",
-				"1",
-			]),
-			0,
-		);
-	});
-
-	assert.match(
-		messages.errors.join("\n"),
-		/CRAP warning: \d+ row\(s\) above 1\./,
-	);
-});
-
-test("metrics scoring rejects a warn threshold above max-crap", async () => {
-	const messages = await captureConsole(async () => {
-		assert.equal(
-			await main([
-				"score",
-				"--metrics",
-				"fixtures/complexity-metrics.json",
-				"--coverage-file",
-				"fixtures/coverage-summary.json",
-				"--max-crap",
-				"20",
-				"--warn",
-				"25",
-			]),
+			await main(["--coverage-file", "coverage/coverage-final.json"]),
 			2,
 		);
 	});
 
-	assert.deepEqual(messages.errors, [
-		"CRAP warn (25) must not exceed max-crap (20).",
-	]);
-	assert.deepEqual(messages.logs, []);
+	assert.match(messages.errors.join("\n"), /Unknown command: --coverage-file/);
+});
+
+test("no longer accepts the metrics mode flags", () => {
+	assert.throws(
+		() => parseCliArgs(["score", "--metrics", "complexity-metrics.json"]),
+		/Unknown option '--metrics'/,
+	);
+	assert.throws(
+		() => parseCliArgs(["score", "--max-crap", "30"]),
+		/Unknown option '--max-crap'/,
+	);
+});
+
+test("rejects unknown config keys", () => {
+	const cwd = mkdtempSync(join(tmpdir(), "crap-cli-unknown-config-"));
+	writeFileSync(
+		join(cwd, ".crap-ts.json"),
+		JSON.stringify({ maxCrap: 30, metrics: "complexity-metrics.json" }),
+	);
+
+	try {
+		assert.throws(
+			() => parseCliArgs(["score"], { cwd }),
+			/Unknown \.crap-ts\.json key\(s\): maxCrap, metrics/,
+		);
+	} finally {
+		rmSync(cwd, { force: true, recursive: true });
+	}
 });
 
 async function captureConsole(callback) {
@@ -207,3 +205,70 @@ async function captureConsole(callback) {
 
 	return { errors, logs };
 }
+
+test("reports invalid flags as usage errors", async () => {
+	const messages = await captureConsole(async () => {
+		assert.equal(await main(["score", "--max", "loud"]), 2);
+	});
+
+	assert.deepEqual(messages.errors, [
+		"Usage error: --max must be a finite number.",
+	]);
+});
+
+test("rejects non-boolean and non-string config values", async () => {
+	const cwd = mkdtempSync(join(tmpdir(), "crap-cli-typed-config-"));
+
+	try {
+		for (const [config, message] of [
+			[{ reportOnly: "false" }, /reportOnly must be a boolean/],
+			[{ skipCoverage: 1 }, /skipCoverage must be a boolean/],
+			[
+				{ coverageCommand: ["npm", "test"] },
+				/coverageCommand must be a string/,
+			],
+		]) {
+			writeFileSync(join(cwd, ".crap-ts.json"), JSON.stringify(config));
+			assert.throws(() => parseCliArgs(["score"], { cwd }), message);
+		}
+
+		const messages = await captureConsole(async () => {
+			assert.equal(
+				await main(["score", "--config", join(cwd, ".crap-ts.json")]),
+				2,
+			);
+		});
+
+		assert.match(
+			messages.errors.join("\n"),
+			/^Usage error: coverageCommand must be a string/,
+		);
+	} finally {
+		rmSync(cwd, { force: true, recursive: true });
+	}
+});
+
+test("reports invalid coverage as an input error without a stack trace", async () => {
+	const cwd = mkdtempSync(join(tmpdir(), "crap-cli-bad-coverage-"));
+	const coveragePath = join(cwd, "coverage-final.json");
+	writeFileSync(coveragePath, "{ not json");
+
+	try {
+		const messages = await captureConsole(async () => {
+			assert.equal(
+				await main([
+					"score",
+					"--coverage-file",
+					coveragePath,
+					"--skip-coverage",
+				]),
+				1,
+			);
+		});
+
+		assert.equal(messages.errors.length, 1);
+		assert.match(messages.errors[0], /^Error: .*JSON/);
+	} finally {
+		rmSync(cwd, { force: true, recursive: true });
+	}
+});
