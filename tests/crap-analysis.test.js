@@ -96,7 +96,8 @@ test("never uses a nested function's counter for its parent", async () => {
 		sourceText: "function odo() { return () => {}; }",
 	});
 
-	assert.equal(parent.evidence, "missing");
+	// The parent never borrows the child's counter.
+	assert.equal(parent.evidence, "ignored");
 	assert.equal(child.evidence, "function");
 });
 
@@ -336,18 +337,116 @@ export const make = (a: number) => (b: number) => {
 	]);
 });
 
-test("keeps a curried arrow's body counter with the outer arrow inside an object literal", async () => {
+test("keeps a curried arrow's body statement and counter with the outer arrow inside an object literal", async () => {
+	// Istanbul rewrites the outer arrow's expression body into a `return`
+	// statement at the inner arrow's first token, and places the outer
+	// function counter there too.
 	const [outer, inner] = await analyzeFileRisk({
-		coverage: {
-			f: { 0: 1, 1: 1 },
-			fnMap: { 0: { loc: location(1, 34, 1) }, 1: { loc: location(1, 41, 1) } },
-			s: {},
-			statementMap: {},
-		},
+		coverage: coverage({
+			f: { 0: 1, 1: 0 },
+			fnMap: {
+				0: { loc: location(1, 34, 43) },
+				1: { loc: location(1, 41, 43) },
+			},
+			statements: [[location(1, 34, 43), 1]],
+		}),
 		filePath: "nog.ts",
 		sourceText: "export const api = { make: (a) => (b) => {} };",
 	});
 
-	assert.equal(outer.evidence, "function");
-	assert.equal(inner.evidence, "function");
+	assert.deepEqual(
+		[
+			outer.evidence,
+			outer.coveragePercent,
+			inner.evidence,
+			inner.coveragePercent,
+		],
+		["statements", 100, "function", 0],
+	);
+});
+
+test("marks instrumented functions without any counter as ignored", async () => {
+	// `/* istanbul ignore next */` and `/* v8 ignore */` leave no counters.
+	const [ignored, covered] = await analyzeFileRisk({
+		coverage: coverage({ statements: [[location(3, 18, 27), 1]] }),
+		filePath: "ignored.ts",
+		sourceText:
+			"/* istanbul ignore next */\nfunction tribble() { return 1; }\nfunction worf() { return 2; }",
+	});
+
+	assert.equal(ignored.evidence, "ignored");
+	assert.equal(covered.evidence, "statements");
+});
+
+test("uses a function counter placed at the function's first token", async () => {
+	// Per-line V8 converters put the function counter at the function start;
+	// the line statement starts at column 0, outside the arrow.
+	const [risk] = await analyzeFileRisk({
+		coverage: coverage({
+			f: { 0: 1 },
+			fnMap: { 0: { loc: location(1, 22, 37) } },
+			statements: [[location(1, 0, 37), 1]],
+		}),
+		filePath: "double.ts",
+		sourceText: "export const double = (x) => x * 2;",
+	});
+
+	assert.equal(risk.evidence, "function");
+	assert.equal(risk.coveragePercent, 100);
+});
+
+test("treats namespaces that only hold types as declaration-only", async () => {
+	const executable = async (sourceText) =>
+		(await analyzeSource({ filePath: "module.ts", sourceText })).executable;
+
+	assert.equal(
+		await executable(
+			"export namespace Api { export interface User { name: string } }",
+		),
+		false,
+	);
+	assert.equal(
+		await executable("namespace Bajor.Shrine { export type Orb = string; }"),
+		false,
+	);
+	assert.equal(
+		await executable("export namespace Api { export const version = 1; }"),
+		true,
+	);
+});
+
+test("accepts coverage for CR-only and Unicode line separators", async () => {
+	for (const separator of ["\r", "\r\n", " "]) {
+		const [risk] = await analyzeFileRisk({
+			coverage: coverage({ statements: [[location(2, 1, 9), 1]] }),
+			filePath: "quark.ts",
+			sourceText: `function quark() {${separator} return 1;${separator}}`,
+		});
+
+		assert.equal(risk.coveredStatements, 1);
+	}
+});
+
+test("scores files with many empty callbacks in near-linear time", async () => {
+	const count = 2000;
+	const sourceText = `${Array.from({ length: count }, (_, index) => `const c${index} = () => {};`).join("\n")}\n`;
+	const fnMap = Object.fromEntries(
+		Array.from({ length: count }, (_, index) => [
+			index,
+			{ loc: location(index + 1, 6 + String(index).length + 10, 99) },
+		]),
+	);
+	const f = Object.fromEntries(
+		Array.from({ length: count }, (_, index) => [index, 1]),
+	);
+	const started = performance.now();
+	const risks = await analyzeFileRisk({
+		coverage: coverage({ f, fnMap }),
+		filePath: "tribbles.ts",
+		sourceText,
+	});
+
+	assert.equal(risks.length, count);
+	assert.ok(risks.every((risk) => risk.evidence === "function"));
+	assert.ok(performance.now() - started < 2000);
 });

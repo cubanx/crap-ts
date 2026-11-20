@@ -41,7 +41,12 @@ export async function runCrapAudit({
 		});
 
 		if (result.status !== 0) {
-			return result.status ?? 1;
+			console.error(
+				result.status === null
+					? `Coverage command failed: ${result.error?.message ?? `killed by ${result.signal}`}`
+					: `Coverage command failed with exit code ${result.status}.`,
+			);
+			return 1;
 		}
 	}
 
@@ -180,9 +185,10 @@ function buildReport({
 	const summary = {
 		files,
 		functions: rows.length,
-		aboveMax: count((row) => row.crap > maxScore),
+		aboveMax: count((row) => row.level !== "ignored" && row.crap > maxScore),
 		warning: count((row) => row.level === "warn"),
 		missingEvidence: count((row) => row.evidence === "missing"),
+		ignored: count((row) => row.evidence === "ignored"),
 		missingFiles: missingFiles.length,
 	};
 
@@ -211,10 +217,12 @@ function printTextReport({ all, limit, maxScore, report, warnScore }) {
 		summary.missingEvidence === 0
 			? ""
 			: `, ${summary.missingEvidence} without coverage evidence`;
+	const ignoredSummary =
+		summary.ignored === 0 ? "" : `, ${summary.ignored} ignored by coverage`;
 
 	console.log();
 	console.log(
-		`CRAP report: ${summary.functions} functions checked, ${summary.aboveMax} above ${maxScore}${warningSummary}${missingSummary}.`,
+		`CRAP report: ${summary.functions} functions checked, ${summary.aboveMax} above ${maxScore}${warningSummary}${missingSummary}${ignoredSummary}.`,
 	);
 
 	for (const row of all ? functions : functions.slice(0, limit)) {
@@ -222,20 +230,26 @@ function printTextReport({ all, limit, maxScore, report, warnScore }) {
 	}
 }
 
+const rowTags = { fail: "FAIL", ignored: "SKIP", ok: "  ok", warn: "WARN" };
+
 function formatReportRow(row) {
 	return [
-		`${row.level === "ok" ? "  ok" : row.level.toUpperCase()} ${row.file}:${row.line}`,
+		`${rowTags[row.level]} ${row.file}:${row.line}`,
 		row.name,
 		`CRAP ${row.crap.toFixed(1)}`,
 		`complexity ${row.complexity}`,
-		row.evidence === "missing"
-			? "coverage missing"
+		row.evidence === "missing" || row.evidence === "ignored"
+			? `coverage ${row.evidence}`
 			: `coverage ${row.coverage.toFixed(0)}%`,
 		`${row.lines} lines`,
 	].join(" | ");
 }
 
 function getRiskLevel(risk, { maxScore, warnScore }) {
+	if (risk.evidence === "ignored") {
+		return "ignored";
+	}
+
 	if (risk.crapScore > maxScore || risk.evidence === "missing") {
 		return "fail";
 	}
@@ -252,6 +266,7 @@ function readCoverageFiles(coveragePaths, root) {
 
 	for (const coveragePath of coveragePaths) {
 		const coverageJson = parseCoverageJson(coveragePath);
+		assertObject(coverageJson, coveragePath);
 
 		for (const [key, entry] of Object.entries(coverageJson)) {
 			const label = `${coveragePath} (${key})`;
@@ -375,11 +390,19 @@ function assertRange(range, label) {
 		!Number.isInteger(start.column) ||
 		start.column < 0 ||
 		!Number.isInteger(end.line) ||
-		end.line < start.line ||
-		!validEndColumn
+		!validEndColumn ||
+		// A null end column means end of line, which never precedes the start.
+		comparePositions(end, start, Number.POSITIVE_INFINITY) < 0
 	) {
 		throw new Error(`Invalid coverage position: ${label}`);
 	}
+}
+
+function comparePositions(left, right, nullColumn) {
+	return (
+		left.line - right.line ||
+		(left.column ?? nullColumn) - (right.column ?? nullColumn)
+	);
 }
 
 function listSourceFiles(directory) {

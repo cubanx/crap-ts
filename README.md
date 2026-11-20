@@ -99,8 +99,9 @@ analyzed too, even when their extension is not in the list above.
 An inventoried file with no coverage entry **fails the gate** if it contains a
 function body or an executable module-level statement. Declaration-only files
 are exempt: type aliases, interfaces, `declare` statements, re-exports
-(`export … from`) and binding imports (`import { x } from`). A side-effect
-import (`import "./setup"`) counts as executable. The functions in such a file
+(`export … from`), binding imports (`import { x } from`) and namespaces that
+hold only those. A side-effect import (`import "./setup"`) counts as
+executable. The functions in such a file
 are still listed, with `evidence: "missing"`.
 
 Use `exclude` for tests, fixtures and tooling that your coverage run does not
@@ -120,9 +121,16 @@ Coverage is per function, from Istanbul statement counters:
   counters count as executed.
 - A function with no owned statements (for example `() => {}`) uses its own
   Istanbul function counter instead (`evidence: "function"`): 100% if it ran,
-  0% if not.
-- A function with neither is reported at 0% with `evidence: "missing"`, and
-  **fails the gate**, the same as a file with no coverage entry.
+  0% if not. A counter inside the function is preferred; one placed exactly
+  at the function's first token (as per-line V8 converters do) is used when
+  there is none inside.
+- A function in a file that has a coverage entry but with no counter at all
+  was excluded by the coverage tool (`/* istanbul ignore next */`,
+  `/* v8 ignore start */`). It is listed with `evidence: "ignored"` and level
+  `ignored`, and never fails or warns.
+- Functions in a file with no coverage entry are reported at 0% with
+  `evidence: "missing"` and **fail the gate**. Files excluded with a
+  file-level ignore hint have no entry, so `exclude` them.
 - Module-level statements belong to no function.
 
 Pass `--coverage-file` more than once (or a `coverageFile` array) to merge
@@ -134,8 +142,9 @@ percentages.
 (a line that does not exist, or a column past the end of the line): re-run
 coverage after changing the source. This is a cheap staleness guard, not a
 content hash; edits that keep every statement position valid are not detected.
-Malformed coverage (missing maps, negative or non-integer counters, invalid
-positions) is an error, not a silent zero.
+Malformed coverage (a top-level value that is not an object, missing maps,
+negative or non-integer counters, invalid or reversed positions) is an error,
+not a silent zero.
 
 V8-based coverage (for example Vitest's default provider) reports one
 statement per line, so a function's coverage is line-granular there. Use the
@@ -170,7 +179,7 @@ abstract methods have no body and no row. Unnamed functions are reported as
 
 `minLines` (default 10) hides functions shorter than that many lines from both
 reports and the gate. A function fails when its score is above `max` or its
-evidence is `missing`.
+evidence is `missing`. Functions with evidence `ignored` never fail or warn.
 
 When the CRAP check flags a hotspot:
 
@@ -211,9 +220,13 @@ error.
 - `--report-only`: print results without failing on the gate.
 - `--skip-coverage`: do not run the coverage command.
 
-Exit codes: `0` passed (or `--report-only`), `1` gate failed or coverage
-input is missing, malformed or stale, `2` usage or config error (unknown
+Exit codes: `0` passed (or `--report-only`), `1` gate failed, coverage
+command failed, or coverage input is missing, malformed or stale, `2` usage or
+config error (unknown
 command or flag, invalid value, unreadable or invalid config file).
+
+When the coverage command fails, `crap-ts` exits `1` before scoring and
+prints no report, not even with `--json`.
 
 The text report is for people and may change in any release. Parse `--json`
 instead.
@@ -256,6 +269,7 @@ changed in meaning. A breaking change bumps `schemaVersion`.
     "aboveMax": 0,
     "warning": 2,
     "missingEvidence": 0,
+    "ignored": 0,
     "missingFiles": 0,
     "passed": true
   },
@@ -282,9 +296,9 @@ changed in meaning. A breaking change bumps `schemaVersion`.
 
 - `thresholds.warn` is `null` when no warn threshold is set.
 - `summary.files`: source files analyzed. `functions`: rows listed.
-  `aboveMax`: rows with `crap > max`. `warning`: rows with level `warn`.
-  `missingEvidence`: rows with evidence `missing`. `missingFiles`: length of
-  `missingFiles`.
+  `aboveMax`: rows with `crap > max`, not counting `ignored` rows. `warning`: rows with level `warn`.
+  `missingEvidence`: rows with evidence `missing`. `ignored`: rows with
+  evidence `ignored`. `missingFiles`: length of `missingFiles`.
 - `summary.passed` is the gate verdict, `aboveMax`, `missingEvidence` and
   `missingFiles` all zero, and ignores `--report-only`.
 - `functions` lists every function at or above `minLines`, never truncated by
@@ -293,10 +307,10 @@ changed in meaning. A breaking change bumps `schemaVersion`.
   `column` are one-based and point at the function's first token.
 - `coverage` is a percentage from 0 to 100. `crap` and `coverage` are
   unrounded.
-- `evidence` is `statements`, `function` or `missing` (see
+- `evidence` is `statements`, `function`, `ignored` or `missing` (see
   [Coverage](#coverage)).
-- `level` is `fail` (above `max`, or missing evidence), `warn` (above `warn`)
-  or `ok`.
+- `level` is `fail` (above `max`, or missing evidence), `warn` (above `warn`),
+  `ignored` (evidence `ignored`) or `ok`.
 - `missingFiles` lists inventoried files with executable code and no coverage
   entry, sorted.
 
@@ -333,8 +347,8 @@ Everything else under `src/` is internal and may change in any release.
 - Nested functions no longer add their decisions to the parent. Parameter and
   destructuring defaults and logical assignment now add decisions.
   Constructors, getters and setters now get rows.
-- Source files without coverage entries, and functions without any coverage
-  counter, now fail the gate. Add `exclude` entries for tests and tooling
+- Source files without coverage entries now fail the gate. Functions the
+  coverage tool ignored are listed as `ignored` and do not fail. Add `exclude` entries for tests and tooling
   (for example `"exclude": [".test.ts", "vitest.config"]`) if your `include`
   matches them.
 - `--metrics`, `--max-crap`, the `metrics` and `maxCrap` config keys, and

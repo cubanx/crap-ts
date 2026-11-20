@@ -167,6 +167,14 @@ function assignStatementCoverage(functions, coverage) {
 		owner.risk.coveredStatements += coverage.s[id] > 0 ? 1 : 0;
 	}
 
+	const countersByOwner = groupCountersBy(coverage.fnMap, (start) =>
+		findOwner(functions, start),
+	);
+	// Per-line V8 converters place a function's counter at its first token.
+	const countersAtStart = groupCountersBy(coverage.fnMap, (start) =>
+		functions.findLast((fn) => comparePositions(fn.range.start, start) === 0),
+	);
+
 	for (const fn of functions) {
 		const { risk } = fn;
 
@@ -177,16 +185,34 @@ function assignStatementCoverage(functions, coverage) {
 		}
 
 		// A nested function's counter must never stand in for its parent's.
-		const ownedCounters = Object.entries(coverage.fnMap).filter(
-			([, metadata]) => findOwner(functions, metadata.loc.start) === fn,
-		);
+		const ownedCounters = countersByOwner.get(fn) ?? [];
+		const counters =
+			ownedCounters.length > 0
+				? ownedCounters
+				: (countersAtStart.get(fn) ?? []);
 
-		if (ownedCounters.length === 1) {
-			const [[id]] = ownedCounters;
-			risk.coveragePercent = coverage.f[id] > 0 ? 100 : 0;
+		if (counters.length === 1) {
+			risk.coveragePercent = coverage.f[counters[0]] > 0 ? 100 : 0;
 			risk.evidence = "function";
+		} else if (counters.length === 0) {
+			// Instrumented file, no counters: an ignore hint removed them.
+			risk.evidence = "ignored";
 		}
 	}
+}
+
+function groupCountersBy(fnMap, getFunction) {
+	const groups = new Map();
+
+	for (const [id, metadata] of Object.entries(fnMap)) {
+		const fn = getFunction(metadata.loc.start);
+
+		if (fn) {
+			groups.set(fn, [...(groups.get(fn) ?? []), id]);
+		}
+	}
+
+	return groups;
 }
 
 // Functions are collected in preorder, so the last match is the innermost.
@@ -209,7 +235,8 @@ function comparePositions(left, right) {
 }
 
 function assertStatementsInSource(coverage, sourceText, filePath) {
-	const lines = sourceText.split("\n");
+	// The line terminators TypeScript and Babel recognise.
+	const lines = sourceText.split(/\r\n|[\n\r\u2028\u2029]/);
 
 	for (const { start } of Object.values(coverage.statementMap)) {
 		const line = lines[start.line - 1];
@@ -223,7 +250,11 @@ function assertStatementsInSource(coverage, sourceText, filePath) {
 }
 
 function hasExecutableModuleStatements({ SyntaxKind, sourceFile }) {
-	return sourceFile.statements.some((statement) => {
+	return hasExecutableStatements(SyntaxKind, sourceFile.statements);
+}
+
+function hasExecutableStatements(SyntaxKind, statements) {
+	return statements.some((statement) => {
 		if (
 			statement.modifiers?.some(
 				(modifier) => modifier.kind === SyntaxKind.DeclareKeyword,
@@ -236,6 +267,9 @@ function hasExecutableModuleStatements({ SyntaxKind, sourceFile }) {
 			case SyntaxKind.ImportDeclaration:
 				// Side-effect imports (`import "./x"`) run code; binding imports do not.
 				return !statement.importClause;
+			case SyntaxKind.ModuleDeclaration:
+				// TypeScript emits a namespace only when its body has runtime code.
+				return isExecutableNamespace(SyntaxKind, statement);
 			case SyntaxKind.ExportDeclaration:
 			case SyntaxKind.InterfaceDeclaration:
 			case SyntaxKind.TypeAliasDeclaration:
@@ -246,6 +280,19 @@ function hasExecutableModuleStatements({ SyntaxKind, sourceFile }) {
 				return true;
 		}
 	});
+}
+
+function isExecutableNamespace(SyntaxKind, declaration) {
+	const { body } = declaration;
+
+	if (!body) {
+		return false;
+	}
+
+	// `namespace A.B {}` nests one ModuleDeclaration per name.
+	return body.kind === SyntaxKind.ModuleDeclaration
+		? isExecutableNamespace(SyntaxKind, body)
+		: hasExecutableStatements(SyntaxKind, body.statements);
 }
 
 function toPosition(sourceFile, offset) {

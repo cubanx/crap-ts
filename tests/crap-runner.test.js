@@ -359,6 +359,7 @@ test("prints the full JSON report before failing the gate", async () => {
 					aboveMax: 1,
 					warning: 0,
 					missingEvidence: 0,
+					ignored: 0,
 					missingFiles: 0,
 					passed: false,
 				},
@@ -448,6 +449,99 @@ test("rejects malformed coverage counters", async () => {
 					skipCoverage: true,
 				}),
 				/Invalid coverage counter: .*first\.ts\) statement 0/,
+			);
+		},
+	);
+});
+
+test("rejects coverage JSON that is not an object of file entries", async () => {
+	await withProject(
+		{ "coverage-final.json": [], "first.ts": firstSource },
+		async (cwd) => {
+			await assert.rejects(
+				runCrapAudit({
+					coveragePaths: ["coverage-final.json"],
+					cwd,
+					reportOnly: true,
+					skipCoverage: true,
+				}),
+				/Invalid coverage data: .*coverage-final\.json/,
+			);
+		},
+	);
+});
+
+test("rejects statement ranges that end before they start", async () => {
+	const reversed = branchCoverage([1, 1, 1]);
+	reversed.statementMap[0] = {
+		end: { column: 1, line: 3 },
+		start: { column: 9, line: 3 },
+	};
+
+	await withProject(
+		{
+			"coverage-final.json": { "first.ts": reversed },
+			"first.ts": firstSource,
+		},
+		async (cwd) => {
+			await assert.rejects(
+				runCrapAudit({
+					coveragePaths: ["coverage-final.json"],
+					cwd,
+					skipCoverage: true,
+				}),
+				/Invalid coverage position: .*statement 0/,
+			);
+		},
+	);
+});
+
+test("maps a failing coverage command to exit code 1", async () => {
+	await withProject({}, async (cwd) => {
+		const messages = await captureConsole(() =>
+			runCrapAudit({ coverageCommand: "exit 7", cwd }),
+		);
+
+		assert.equal(messages.result, 1);
+		assert.match(
+			messages.errors.join("\n"),
+			/Coverage command failed with exit code 7/,
+		);
+	});
+});
+
+test("lists ignored functions without failing the gate", async () => {
+	await withProject(
+		{
+			"coverage-final.json": {
+				"first.ts": {
+					...branchCoverage([1, 1, 1]),
+					f: {},
+					fnMap: {},
+					s: {},
+					statementMap: {},
+				},
+			},
+			"first.ts": firstSource,
+		},
+		async (cwd) => {
+			const messages = await captureConsole(() =>
+				runCrapAudit({
+					coveragePaths: ["coverage-final.json"],
+					cwd,
+					json: true,
+					minLines: 1,
+					skipCoverage: true,
+				}),
+			);
+			const report = JSON.parse(messages.logs.join("\n"));
+
+			assert.equal(messages.result, 0);
+			assert.equal(report.summary.ignored, 1);
+			assert.equal(report.summary.passed, true);
+			assert.deepEqual(
+				report.functions.map((row) => [row.name, row.evidence, row.level]),
+				[["first", "ignored", "ignored"]],
 			);
 		},
 	);
