@@ -503,3 +503,123 @@ test("scores files with many empty callbacks in near-linear time", async () => {
 	assert.ok(risks.every((risk) => risk.evidence === "function"));
 	assert.ok(performance.now() - started < 2000);
 });
+
+test("assigns nested V8 first-token counters to the function that starts there", async () => {
+	// V8 places each counter at its function's first token; the inner arrow
+	// starts inside the outer one.
+	const [outer, inner] = await analyzeFileRisk({
+		coverage: coverage({
+			f: { 0: 1, 1: 0 },
+			fnMap: {
+				0: { loc: location(1, 14, 27) },
+				1: { loc: location(1, 20, 27) },
+			},
+			statements: [[location(1, 0, 28), 1]],
+		}),
+		filePath: "outer.ts",
+		sourceText: "const outer = () => () => 1;",
+	});
+
+	assert.deepEqual(
+		[
+			outer.evidence,
+			outer.coveragePercent,
+			inner.evidence,
+			inner.coveragePercent,
+		],
+		["function", 100, "function", 0],
+	);
+});
+
+test("treats type-only import-equals declarations as declaration-only", async () => {
+	const executable = async (sourceText) =>
+		(await analyzeSource({ filePath: "module.ts", sourceText })).executable;
+
+	assert.equal(
+		await executable('import type Station = require("./station");'),
+		false,
+	);
+	assert.equal(
+		await executable('import Station = require("./station");'),
+		true,
+	);
+});
+
+test("honours istanbul ignore if and ignore else", async () => {
+	const risks = await analyzeFileRisk({
+		coverage: coverage(),
+		filePath: "odo.ts",
+		sourceText: `export function odo(y) {
+	/* istanbul ignore if */
+	if (y) {
+		setTimeout(function shapeshift() { return 1; });
+	} else {
+		setTimeout(function regenerate() { return 2; });
+	}
+	/* istanbul ignore else */
+	if (y) {
+		setTimeout(function solid() { return 3; });
+	} else {
+		setTimeout(function liquid() { return 4; });
+	}
+}`,
+	});
+
+	assert.deepEqual(
+		risks.map((risk) => [risk.name, risk.evidence]),
+		[
+			["odo", "missing"],
+			["shapeshift", "ignored"],
+			["regenerate", "missing"],
+			["solid", "missing"],
+			["liquid", "ignored"],
+		],
+	);
+});
+
+test("ignores comment-like text inside strings, templates, regex and JSX", async () => {
+	const evidence = async (filePath, sourceText) =>
+		Object.fromEntries(
+			(
+				await analyzeFileRisk({ coverage: coverage(), filePath, sourceText })
+			).map((risk) => [risk.name, risk.evidence]),
+		);
+
+	assert.deepEqual(
+		await evidence(
+			"strings.ts",
+			`const header = "/* istanbul ignore file */";
+const usage = \`// v8 ignore start\`;
+const pattern = /\\/\\* istanbul ignore next \\*\\//;
+function quark() { return header + usage; }`,
+		),
+		{ quark: "missing" },
+	);
+	assert.deepEqual(
+		await evidence(
+			"holosuite.tsx",
+			"const view = <p>// istanbul ignore next</p>;\nfunction vic() { return view; }",
+		),
+		{ vic: "missing" },
+	);
+	assert.equal(
+		(
+			await analyzeSource({
+				filePath: "header.ts",
+				sourceText: 'export const header = "/* istanbul ignore file */";',
+			})
+		).executable,
+		true,
+	);
+});
+
+test("finds a real ignore comment after comment-like text in a string", async () => {
+	const [risk] = await analyzeFileRisk({
+		coverage: coverage(),
+		filePath: "url.ts",
+		sourceText:
+			'const u = "http://x"; /* istanbul ignore next */ function f() { return u; }',
+	});
+
+	assert.equal(risk.evidence, "ignored");
+});

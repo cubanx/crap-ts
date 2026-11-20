@@ -25,6 +25,18 @@ export async function runCrapAudit({
 	skipCoverage = false,
 	warnScore,
 } = {}) {
+	for (const [label, value] of [
+		["max", maxScore],
+		["warn", warnScore ?? 0],
+		["minLines", minLines],
+		["limit", limit],
+	]) {
+		if (!Number.isFinite(value)) {
+			console.error(`CRAP ${label} must be a finite number.`);
+			return 2;
+		}
+	}
+
 	if (warnScore !== undefined && warnScore > maxScore) {
 		console.error(
 			`CRAP warn (${warnScore}) must not exceed max (${maxScore}).`,

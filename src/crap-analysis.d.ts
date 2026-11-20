@@ -31,14 +31,15 @@ export interface FunctionRisk {
 	/** Statements whose start lies in this function and not in a nested one. */
 	statements: number;
 	coveredStatements: number;
-	/** `statements`: owned statement counters; `function`: the function's own counter (no owned statements); `ignored`: no counter, under a coverage ignore comment; `missing`: no coverage for the file. */
+	/** `statements`: owned statement counters; `function`: the function's own counter (no owned statements); `ignored`: no counter, under a coverage ignore comment; `missing`: no counter and no ignore comment (no coverage entry, or added after the coverage run). */
 	evidence: "statements" | "function" | "ignored" | "missing";
 	crapScore: number;
 }
 
 /**
  * Score every function with a body in one source file.
- * Without `coverage`, every row reports `evidence: "missing"` and 0% coverage.
+ * A function without counters (or without `coverage`) reports 0% coverage and
+ * `evidence: "missing"`, or `"ignored"` when a coverage ignore comment covers it.
  */
 export function analyzeFileRisk(input: {
 	coverage?: FileCoverage;

@@ -43,7 +43,7 @@ export async function analyzeSource({
 		sourceText,
 	});
 	const adapter = { ...defaultAdapter, sourceFile };
-	const ignore = findIgnoreComments(sourceText);
+	const ignore = findIgnoreComments(sourceText, collectLiteralRanges(adapter));
 	const functions = collectFunctions(adapter, filePath, ignore);
 
 	if (coverage) {
@@ -133,18 +133,32 @@ function collectFunctions(adapter, filePath, ignore) {
 	function visit(node) {
 		const start = toPosition(sourceFile, node.getStart(sourceFile));
 
-		// An `ignore next` comment covers the outermost node after it.
-		if (
-			node.kind !== SyntaxKind.SourceFile &&
-			ignore.nextTargets.delete(positionKey(start))
-		) {
-			ignore.ranges.push({ end: toPosition(sourceFile, node.getEnd()), start });
+		const targetKey = positionKey(start);
+		const directive = ignore.nextTargets.get(targetKey);
+
+		// An `ignore next|if|else` comment applies to the outermost node after it.
+		if (directive && node.kind !== SyntaxKind.SourceFile) {
+			ignore.nextTargets.delete(targetKey);
+			const target =
+				directive === "next"
+					? node
+					: node.kind === SyntaxKind.IfStatement
+						? node[directive === "if" ? "thenStatement" : "elseStatement"]
+						: undefined;
+
+			if (target) {
+				ignore.ranges.push({
+					end: toPosition(sourceFile, target.getEnd()),
+					start: toPosition(sourceFile, target.getStart(sourceFile)),
+				});
+			}
 		}
 
 		if (isFunctionLikeNode(adapter, node) && node.body) {
 			const end = toPosition(sourceFile, node.getEnd());
 
 			functions.push({
+				bodyStart: toPosition(sourceFile, node.body.getStart(sourceFile)),
 				ignored: isIgnored(ignore, start),
 				range: { end, start },
 				risk: {
@@ -185,12 +199,11 @@ function assignStatementCoverage(functions, coverage) {
 		owner.risk.coveredStatements += coverage.s[id] > 0 ? 1 : 0;
 	}
 
-	const countersByOwner = groupCountersBy(coverage.fnMap, (start) =>
-		findOwner(functions, start),
+	const counterStarts = new Set(
+		Object.values(coverage.fnMap).map(({ loc }) => positionKey(loc.start)),
 	);
-	// Per-line V8 converters place a function's counter at its first token.
-	const countersAtStart = groupCountersBy(coverage.fnMap, (start) =>
-		functions.findLast((fn) => comparePositions(fn.range.start, start) === 0),
+	const countersByOwner = groupCountersBy(coverage.fnMap, (start) =>
+		findCounterOwner(functions, start, counterStarts),
 	);
 
 	for (const fn of functions) {
@@ -202,18 +215,37 @@ function assignStatementCoverage(functions, coverage) {
 			continue;
 		}
 
-		// A nested function's counter must never stand in for its parent's.
-		const ownedCounters = countersByOwner.get(fn) ?? [];
-		const counters =
-			ownedCounters.length > 0
-				? ownedCounters
-				: (countersAtStart.get(fn) ?? []);
+		const counters = countersByOwner.get(fn) ?? [];
 
 		if (counters.length === 1) {
 			risk.coveragePercent = coverage.f[counters[0]] > 0 ? 100 : 0;
 			risk.evidence = "function";
 		}
 	}
+}
+
+// Istanbul places a function counter at the function's body; per-line V8
+// converters place it at the function's first token. The two positions meet
+// only where an arrow is another arrow's expression body (`a => b => 1`):
+// there the outer arrow owns the counter, unless it has a first-token counter
+// of its own, which marks the V8 layout.
+function findCounterOwner(functions, start, counterStarts) {
+	const startingHere = functions.findLast(
+		(fn) => comparePositions(fn.range.start, start) === 0,
+	);
+
+	if (!startingHere) {
+		// A nested function's counter must never stand in for its parent's.
+		return findOwner(functions, start);
+	}
+
+	const parent = functions.find(
+		(fn) => comparePositions(fn.bodyStart, start) === 0,
+	);
+
+	return parent && !counterStarts.has(positionKey(parent.range.start))
+		? parent
+		: startingHere;
 }
 
 function groupCountersBy(fnMap, getFunction) {
@@ -253,12 +285,13 @@ function comparePositions(left, right) {
 const lineTerminatorPattern = /\r\n|[\n\r\u2028\u2029]/g;
 const commentPattern = /\/\*([\s\S]*?)\*\/|\/\/([^\n\r\u2028\u2029]*)/g;
 const ignoreDirectivePattern =
-	/^\s*(?:istanbul|v8|c8)\s+ignore\s+(next|start|stop|file)(?:\s+(\d+))?(?=\W|$)/;
+	/^\s*(?:istanbul|v8|c8)\s+ignore\s+(next|if|else|start|stop|file)(?:\s+(\d+))?(?=\W|$)/;
 const triviaPattern = /(?:\s|\/\*[\s\S]*?\*\/|\/\/[^\n\r\u2028\u2029]*)*/y;
 
 // Coverage tools drop counters for code under these comments:
-// `istanbul|v8|c8 ignore next [lines]`, `ignore start` … `ignore stop`, `ignore file`.
-function findIgnoreComments(sourceText) {
+// `istanbul|v8|c8 ignore next [lines]`, `ignore if|else`, `ignore start` … `ignore stop`,
+// `ignore file`.
+function findIgnoreComments(sourceText, literalRanges) {
 	const lineStarts = [0];
 
 	for (const match of sourceText.matchAll(lineTerminatorPattern)) {
@@ -269,15 +302,36 @@ function findIgnoreComments(sourceText) {
 		const line = lineStarts.findLastIndex((lineStart) => lineStart <= offset);
 		return { column: offset - lineStarts[line], line: line + 1 };
 	};
+	const toOffset = ({ column, line }) => lineStarts[line - 1] + column;
+	const literals = literalRanges.map(({ end, start }) => ({
+		end: toOffset(end),
+		start: toOffset(start),
+	}));
 	const ignore = {
 		file: false,
 		lineRanges: [],
-		nextTargets: new Set(),
+		nextTargets: new Map(),
 		ranges: [],
 	};
 	let regionStart;
 
-	for (const match of sourceText.matchAll(commentPattern)) {
+	commentPattern.lastIndex = 0;
+
+	for (
+		let match = commentPattern.exec(sourceText);
+		match;
+		match = commentPattern.exec(sourceText)
+	) {
+		const literal = literals.find(
+			({ end, start }) => start <= match.index && match.index < end,
+		);
+
+		// Comment-like text inside a literal is not a comment; resume after it.
+		if (literal) {
+			commentPattern.lastIndex = literal.end;
+			continue;
+		}
+
 		const directive = ignoreDirectivePattern.exec(match[1] ?? match[2]);
 
 		if (!directive) {
@@ -301,11 +355,12 @@ function findIgnoreComments(sourceText) {
 			// c8 style: the next N lines.
 			const { line } = toSourcePosition(commentEnd);
 			ignore.lineRanges.push([line + 1, line + Number(lineCount)]);
-		} else if (kind === "next") {
+		} else if (kind === "next" || kind === "if" || kind === "else") {
 			triviaPattern.lastIndex = commentEnd;
 			triviaPattern.exec(sourceText);
-			ignore.nextTargets.add(
+			ignore.nextTargets.set(
 				positionKey(toSourcePosition(triviaPattern.lastIndex)),
+				kind,
 			);
 		}
 	}
@@ -318,6 +373,42 @@ function findIgnoreComments(sourceText) {
 	}
 
 	return ignore;
+}
+
+// Strings, templates, regex literals and JSX text can contain `/*` or `//`.
+function collectLiteralRanges(adapter) {
+	const { SyntaxKind, sourceFile } = adapter;
+	const literalKinds = new Set([
+		SyntaxKind.StringLiteral,
+		SyntaxKind.NoSubstitutionTemplateLiteral,
+		SyntaxKind.TemplateHead,
+		SyntaxKind.TemplateMiddle,
+		SyntaxKind.TemplateTail,
+		SyntaxKind.RegularExpressionLiteral,
+		SyntaxKind.JsxText,
+	]);
+	const ranges = [];
+
+	function visit(node) {
+		if (literalKinds.has(node.kind)) {
+			ranges.push({
+				end: toPosition(sourceFile, node.getEnd()),
+				// JSX text has no leading trivia; its full start is its text.
+				start: toPosition(
+					sourceFile,
+					node.kind === SyntaxKind.JsxText
+						? node.pos
+						: node.getStart(sourceFile),
+				),
+			});
+		}
+
+		adapter.forEachChild(node, visit);
+	}
+
+	visit(sourceFile);
+
+	return ranges;
 }
 
 function isIgnored(ignore, position) {
@@ -367,6 +458,8 @@ function hasExecutableStatements(SyntaxKind, statements) {
 		}
 
 		switch (statement.kind) {
+			case SyntaxKind.ImportEqualsDeclaration:
+				return !statement.isTypeOnly;
 			case SyntaxKind.ImportDeclaration:
 				// Side-effect imports (`import "./x"`) run code; binding imports do not.
 				return !statement.importClause;

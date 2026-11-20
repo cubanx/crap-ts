@@ -99,10 +99,11 @@ analyzed too, even when their extension is not in the list above.
 An inventoried file with no coverage entry **fails the gate** if it contains a
 function body or an executable module-level statement. Declaration-only files
 are exempt: type aliases, interfaces, `declare` statements, re-exports
-(`export … from`), binding imports (`import { x } from`) and namespaces that
-hold only those. A side-effect import (`import "./setup"`) counts as
-executable. The functions in such a file
-are still listed, with `evidence: "missing"`.
+(`export … from`), binding imports (`import { x } from`), type-only
+`import type X = require()` and namespaces that hold only those. A side-effect
+import (`import "./setup"`) counts as executable. The functions in such a file
+are still listed, with `evidence: "missing"` unless an ignore comment covers
+them.
 
 Use `exclude` for tests, fixtures and tooling that your coverage run does not
 instrument.
@@ -136,8 +137,13 @@ Coverage is per function, from Istanbul statement counters:
   - `ignore next` covers the next statement or declaration, including any
     functions inside it.
   - `ignore next N` covers the next N lines.
+  - `ignore if` and `ignore else`, before an `if` statement, cover its `if`
+    branch or its `else` branch.
   - `ignore start` … `ignore stop` covers the region between them.
   - `ignore file` covers the whole file, which then needs no coverage entry.
+
+  Comment-like text inside strings, template literals, regular expressions
+  and JSX text is not treated as a comment.
 
   An ignore comment only exempts a function that has no counters. If the
   coverage tool still measured it, its counters are used.
@@ -333,14 +339,16 @@ The package root is the only entry point. These exports, and the types in
 
 - `runCrapAudit(options?: CrapAuditOptions): Promise<number>` runs the same
   audit as the CLI and resolves to its exit code (`2` for invalid options,
-  `1` for a failed gate or missing coverage file). It rejects with an `Error`
+  including non-finite numbers; `1` for a failed gate, a failed coverage
+  command or a missing coverage file). It rejects with an `Error`
   when coverage or source input is malformed or stale. Options mirror the config
   keys: `coverageCommand`, `coveragePaths`, `cwd`, `includes`, `excludes`,
   `json`, `all`, `limit`, `maxScore`, `warnScore`, `minLines`, `reportOnly`,
   `skipCoverage`.
 - `analyzeFileRisk({ filePath, sourceText, coverage?, minLines?, sourceFilePath? }): Promise<FunctionRisk[]>`
   scores the functions in one source text. `coverage` is that file's entry
-  from `coverage-final.json`; without it every row has `evidence: "missing"`.
+  from `coverage-final.json`. A function without counters has
+  `evidence: "missing"`, or `"ignored"` when an ignore comment covers it.
   `minLines` defaults to 1.
 - `calculateCyclomaticComplexity(node): number` applies the complexity rules
   above to a TypeScript AST node from the consumer's `typescript` package.

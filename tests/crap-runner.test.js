@@ -687,6 +687,27 @@ test("marks failing rows when a score is above max", async () => {
 	assert.doesNotMatch(messages.errors.join("\n"), /CRAP warning/);
 });
 
+test("rejects non-finite numeric options before running coverage", async () => {
+	for (const options of [
+		{ maxScore: Number.NaN },
+		{ warnScore: Number.POSITIVE_INFINITY },
+		{ minLines: Number.NaN },
+		{ limit: Number.NaN },
+	]) {
+		const messages = await captureConsole(() =>
+			runCrapAudit({
+				coverageCommand: "echo should-not-run",
+				coveragePaths: ["fixtures/risky-coverage-final.json"],
+				cwd: repoRoot,
+				...options,
+			}),
+		);
+
+		assert.equal(messages.result, 2);
+		assert.match(messages.errors.join("\n"), /must be a finite number/);
+	}
+});
+
 test("rejects a warn threshold above max", async () => {
 	const messages = await captureConsole(() =>
 		runCrapAudit({
