@@ -112,7 +112,10 @@ Coverage is per function, from Istanbul statement counters:
 
 - A statement belongs to the innermost function whose source range contains
   the statement's start position. Nested functions and callbacks get their own
-  rows and never count toward their parent.
+  rows and never count toward their parent. A statement that starts exactly at
+  a function's first token, such as Istanbul's initializer counter for
+  `const f = () => …`, belongs to the enclosing scope: it runs when the
+  enclosing code does, not when the function is called.
 - `coverage` = executed owned statements / owned statements. Only positive
   counters count as executed.
 - A function with no owned statements (for example `() => {}`) uses its own
@@ -208,8 +211,9 @@ error.
 - `--report-only`: print results without failing on the gate.
 - `--skip-coverage`: do not run the coverage command.
 
-Exit codes: `0` passed (or `--report-only`), `1` gate failed or input could
-not be read, `2` usage error.
+Exit codes: `0` passed (or `--report-only`), `1` gate failed or coverage
+input is missing, malformed or stale, `2` usage or config error (unknown
+command or flag, invalid value, unreadable or invalid config file).
 
 The text report is for people and may change in any release. Parse `--json`
 instead.
@@ -302,7 +306,9 @@ The package root is the only entry point. These exports, and the types in
 `src/index.d.ts`, are the 1.x API:
 
 - `runCrapAudit(options?: CrapAuditOptions): Promise<number>` runs the same
-  audit as the CLI and resolves to its exit code. Options mirror the config
+  audit as the CLI and resolves to its exit code (`2` for invalid options,
+  `1` for a failed gate or missing coverage file). It rejects with an `Error`
+  when coverage or source input is malformed or stale. Options mirror the config
   keys: `coverageCommand`, `coveragePaths`, `cwd`, `includes`, `excludes`,
   `json`, `all`, `limit`, `maxScore`, `warnScore`, `minLines`, `reportOnly`,
   `skipCoverage`.

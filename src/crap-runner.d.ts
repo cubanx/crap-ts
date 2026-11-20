@@ -19,5 +19,8 @@ export interface CrapAuditOptions {
 	warnScore?: number;
 }
 
-/** Resolves to the process exit code: 0 pass, 1 gate or input failure, 2 usage error. */
+/**
+ * Resolves to the process exit code: 0 pass, 1 gate failure or missing coverage file, 2 usage error.
+ * Rejects when coverage or source input is malformed or stale.
+ */
 export function runCrapAudit(options?: CrapAuditOptions): Promise<number>;

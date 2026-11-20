@@ -194,9 +194,12 @@ function findOwner(functions, position) {
 	return functions.findLast((fn) => containsPosition(fn.range, position));
 }
 
+// The start is exclusive: Istanbul places initializer counters and an outer
+// arrow's expression body at a function's first token, and those belong to
+// the enclosing scope.
 function containsPosition(range, position) {
 	return (
-		comparePositions(range.start, position) <= 0 &&
+		comparePositions(range.start, position) < 0 &&
 		comparePositions(position, range.end) < 0
 	);
 }

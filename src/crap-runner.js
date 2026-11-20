@@ -58,8 +58,9 @@ export async function runCrapAudit({
 		return 1;
 	}
 
-	// Coverage tools report real paths; compare everything in that form.
-	const root = realpathSync(cwd);
+	// Coverage tools report real paths; compare everything in the file
+	// system's canonical form (`.native` also canonicalises letter case).
+	const root = realpathSync.native(cwd);
 	const coverageByFile = readCoverageFiles(resolvedCoveragePaths, root);
 	const isSelected = (path) => {
 		const relativePath = relative(root, path);
@@ -250,7 +251,7 @@ function readCoverageFiles(coveragePaths, root) {
 	const coverageByFile = new Map();
 
 	for (const coveragePath of coveragePaths) {
-		const coverageJson = JSON.parse(readFileSync(coveragePath, "utf8"));
+		const coverageJson = parseCoverageJson(coveragePath);
 
 		for (const [key, entry] of Object.entries(coverageJson)) {
 			const label = `${coveragePath} (${key})`;
@@ -258,7 +259,7 @@ function readCoverageFiles(coveragePaths, root) {
 
 			const resolvedKey = isAbsolute(key) ? key : resolve(root, key);
 			const sourcePath = existsSync(resolvedKey)
-				? realpathSync(resolvedKey)
+				? realpathSync.native(resolvedKey)
 				: resolvedKey;
 			coverageByFile.set(
 				sourcePath,
@@ -271,6 +272,16 @@ function readCoverageFiles(coveragePaths, root) {
 	}
 
 	return coverageByFile;
+}
+
+function parseCoverageJson(coveragePath) {
+	try {
+		return JSON.parse(readFileSync(coveragePath, "utf8"));
+	} catch (error) {
+		throw new Error(`Invalid coverage JSON ${coveragePath}: ${error.message}`, {
+			cause: error,
+		});
+	}
 }
 
 // Merge by original source position, never by counter id: separate runs

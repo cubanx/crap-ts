@@ -267,3 +267,87 @@ function choose(value, list) {
 	assert.equal(calculateCyclomaticComplexity(sourceFile.statements[0].body), 9);
 	assert.equal(calculateCyclomaticComplexity(sourceFile.statements[0]), 9);
 });
+
+test("leaves statements that start at a function's own first token to the enclosing scope", async () => {
+	// Positions from istanbul-lib-instrument: the declarator counter (s0, s4)
+	// starts at the arrow itself, and the curried outer arrow's rewritten
+	// `return` (s5) and its function body (f1) start at the inner arrow.
+	const sourceText = `export const handler = (x: number) => {
+  if (x) {
+    return 1;
+  }
+  return 2;
+};
+export const make = (a: number) => (b: number) => {
+  return a + b;
+};
+`;
+	const statementMap = {
+		0: location(1, 23, 1),
+		1: location(2, 2, 3),
+		2: location(3, 4, 13),
+		3: location(5, 2, 11),
+		4: location(7, 20, 1),
+		5: location(7, 35, 1),
+		6: location(8, 2, 15),
+	};
+	const fnMap = {
+		0: { loc: location(1, 38, 1) },
+		1: { loc: location(7, 35, 1) },
+		2: { loc: location(7, 50, 1) },
+	};
+	const moduleLoadOnly = await analyzeFileRisk({
+		coverage: {
+			f: { 0: 0, 1: 0, 2: 0 },
+			fnMap,
+			s: { 0: 1, 1: 0, 2: 0, 3: 0, 4: 1, 5: 0, 6: 0 },
+			statementMap,
+		},
+		filePath: "garak.ts",
+		sourceText,
+	});
+	const fullyCovered = await analyzeFileRisk({
+		coverage: {
+			f: { 0: 1, 1: 1, 2: 1 },
+			fnMap,
+			s: { 0: 1, 1: 1, 2: 1, 3: 1, 4: 1, 5: 1, 6: 1 },
+			statementMap,
+		},
+		filePath: "garak.ts",
+		sourceText,
+	});
+	const summarize = (risks) =>
+		risks.map(({ coveredStatements, evidence, name, statements }) => [
+			name,
+			statements,
+			coveredStatements,
+			evidence,
+		]);
+
+	assert.deepEqual(summarize(moduleLoadOnly), [
+		["handler", 3, 0, "statements"],
+		["make", 1, 0, "statements"],
+		["<anonymous>", 1, 0, "statements"],
+	]);
+	assert.deepEqual(summarize(fullyCovered), [
+		["handler", 3, 3, "statements"],
+		["make", 1, 1, "statements"],
+		["<anonymous>", 1, 1, "statements"],
+	]);
+});
+
+test("keeps a curried arrow's body counter with the outer arrow inside an object literal", async () => {
+	const [outer, inner] = await analyzeFileRisk({
+		coverage: {
+			f: { 0: 1, 1: 1 },
+			fnMap: { 0: { loc: location(1, 34, 1) }, 1: { loc: location(1, 41, 1) } },
+			s: {},
+			statementMap: {},
+		},
+		filePath: "nog.ts",
+		sourceText: "export const api = { make: (a) => (b) => {} };",
+	});
+
+	assert.equal(outer.evidence, "function");
+	assert.equal(inner.evidence, "function");
+});

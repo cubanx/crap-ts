@@ -215,3 +215,60 @@ test("reports invalid flags as usage errors", async () => {
 		"Usage error: --max must be a finite number.",
 	]);
 });
+
+test("rejects non-boolean and non-string config values", async () => {
+	const cwd = mkdtempSync(join(tmpdir(), "crap-cli-typed-config-"));
+
+	try {
+		for (const [config, message] of [
+			[{ reportOnly: "false" }, /reportOnly must be a boolean/],
+			[{ skipCoverage: 1 }, /skipCoverage must be a boolean/],
+			[
+				{ coverageCommand: ["npm", "test"] },
+				/coverageCommand must be a string/,
+			],
+		]) {
+			writeFileSync(join(cwd, ".crap-ts.json"), JSON.stringify(config));
+			assert.throws(() => parseCliArgs(["score"], { cwd }), message);
+		}
+
+		const messages = await captureConsole(async () => {
+			assert.equal(
+				await main(["score", "--config", join(cwd, ".crap-ts.json")]),
+				2,
+			);
+		});
+
+		assert.match(
+			messages.errors.join("\n"),
+			/^Usage error: coverageCommand must be a string/,
+		);
+	} finally {
+		rmSync(cwd, { force: true, recursive: true });
+	}
+});
+
+test("reports invalid coverage as an input error without a stack trace", async () => {
+	const cwd = mkdtempSync(join(tmpdir(), "crap-cli-bad-coverage-"));
+	const coveragePath = join(cwd, "coverage-final.json");
+	writeFileSync(coveragePath, "{ not json");
+
+	try {
+		const messages = await captureConsole(async () => {
+			assert.equal(
+				await main([
+					"score",
+					"--coverage-file",
+					coveragePath,
+					"--skip-coverage",
+				]),
+				1,
+			);
+		});
+
+		assert.equal(messages.errors.length, 1);
+		assert.match(messages.errors[0], /^Error: .*JSON/);
+	} finally {
+		rmSync(cwd, { force: true, recursive: true });
+	}
+});

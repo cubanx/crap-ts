@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import {
+	existsSync,
 	mkdirSync,
 	mkdtempSync,
 	realpathSync,
@@ -8,7 +9,7 @@ import {
 	writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 
@@ -211,6 +212,43 @@ test("matches real-path coverage keys from a symlinked working directory", async
 		} finally {
 			rmSync(linkedCwd, { force: true });
 		}
+	});
+});
+
+test("matches coverage keys when the working directory differs only in case", async (t) => {
+	await withProject({ "Station.ts": firstSource }, async (realCwd) => {
+		const casedCwd = join(dirname(realCwd), basename(realCwd).toUpperCase());
+
+		if (!existsSync(casedCwd)) {
+			t.skip("file system is case-sensitive");
+			return;
+		}
+
+		writeFileSync(
+			join(realCwd, "coverage-final.json"),
+			JSON.stringify({
+				[join(realpathSync.native(realCwd), "Station.ts")]: branchCoverage([
+					1, 1, 1,
+				]),
+			}),
+		);
+
+		const messages = await captureConsole(() =>
+			runCrapAudit({
+				coveragePaths: ["coverage-final.json"],
+				cwd: casedCwd,
+				json: true,
+				minLines: 1,
+				skipCoverage: true,
+			}),
+		);
+		const report = JSON.parse(messages.logs.join("\n"));
+
+		assert.equal(messages.result, 0);
+		assert.deepEqual(
+			report.functions.map((row) => [row.file, row.evidence]),
+			[["Station.ts", "statements"]],
+		);
 	});
 });
 

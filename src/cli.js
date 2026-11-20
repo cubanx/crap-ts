@@ -108,7 +108,12 @@ export async function main(argv = process.argv.slice(2)) {
 		return 0;
 	}
 
-	return runCrapAudit(options);
+	try {
+		return await runCrapAudit(options);
+	} catch (error) {
+		console.error(`Error: ${error.message}`);
+		return 1;
+	}
 }
 
 function parseOptionalNumber(value, label) {
@@ -180,17 +185,25 @@ function normalizeConfig(config) {
 	}
 
 	return stripUndefined({
-		all: config.all,
-		coverageCommand: config.coverageCommand,
+		all: parseConfigType(config.all, "all", "boolean"),
+		coverageCommand: parseConfigType(
+			config.coverageCommand,
+			"coverageCommand",
+			"string",
+		),
 		coveragePaths: normalizeConfigList(config.coverageFile, "coverageFile"),
 		excludes: normalizeConfigList(config.exclude, "exclude"),
 		includes: normalizeConfigList(config.include, "include"),
-		json: config.json,
+		json: parseConfigType(config.json, "json", "boolean"),
 		limit: parseConfigNumber(config.limit, "limit"),
 		maxScore: parseConfigNumber(config.max, "max"),
 		minLines: parseConfigNumber(config.minLines, "minLines"),
-		reportOnly: config.reportOnly,
-		skipCoverage: config.skipCoverage,
+		reportOnly: parseConfigType(config.reportOnly, "reportOnly", "boolean"),
+		skipCoverage: parseConfigType(
+			config.skipCoverage,
+			"skipCoverage",
+			"boolean",
+		),
 		warnScore: parseConfigNumber(config.warn, "warn"),
 	});
 }
@@ -204,6 +217,14 @@ function parseConfigNumber(value, label) {
 		throw new TypeError(
 			`${label} must be a finite number in ${defaultConfigPath}.`,
 		);
+	}
+
+	return value;
+}
+
+function parseConfigType(value, label, type) {
+	if (value !== undefined && typeof value !== type) {
+		throw new TypeError(`${label} must be a ${type} in ${defaultConfigPath}.`);
 	}
 
 	return value;
