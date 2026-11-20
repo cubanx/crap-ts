@@ -161,6 +161,9 @@ function buildReport({
 	const rows = functions
 		.sort(
 			(left, right) =>
+				// Ignored rows never gate, so keep them below every gated row.
+				Number(left.evidence === "ignored") -
+					Number(right.evidence === "ignored") ||
 				right.crapScore - left.crapScore ||
 				left.filePath.localeCompare(right.filePath) ||
 				left.startLine - right.startLine ||

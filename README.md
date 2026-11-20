@@ -124,13 +124,23 @@ Coverage is per function, from Istanbul statement counters:
   0% if not. A counter inside the function is preferred; one placed exactly
   at the function's first token (as per-line V8 converters do) is used when
   there is none inside.
-- A function in a file that has a coverage entry but with no counter at all
-  was excluded by the coverage tool (`/* istanbul ignore next */`,
-  `/* v8 ignore start */`). It is listed with `evidence: "ignored"` and level
-  `ignored`, and never fails or warns.
-- Functions in a file with no coverage entry are reported at 0% with
-  `evidence: "missing"` and **fail the gate**. Files excluded with a
-  file-level ignore hint have no entry, so `exclude` them.
+- A function with no counter at all is reported at 0% with
+  `evidence: "missing"` and **fails the gate**: its file has no coverage
+  entry, or the function was added after coverage ran.
+- The exception is code under a coverage ignore comment, which coverage tools
+  leave without counters on purpose. Such a function is listed with
+  `evidence: "ignored"` and level `ignored`, never fails or warns, and sorts
+  after every other row. Its `coverage` (0) and `crap` are shown for
+  reference only. crap-ts recognises `istanbul`, `v8` and `c8` comments
+  (block or line):
+  - `ignore next` covers the next statement or declaration, including any
+    functions inside it.
+  - `ignore next N` covers the next N lines.
+  - `ignore start` … `ignore stop` covers the region between them.
+  - `ignore file` covers the whole file, which then needs no coverage entry.
+
+  An ignore comment only exempts a function that has no counters. If the
+  coverage tool still measured it, its counters are used.
 - Module-level statements belong to no function.
 
 Pass `--coverage-file` more than once (or a `coverageFile` array) to merge
@@ -302,7 +312,8 @@ changed in meaning. A breaking change bumps `schemaVersion`.
 - `summary.passed` is the gate verdict, `aboveMax`, `missingEvidence` and
   `missingFiles` all zero, and ignores `--report-only`.
 - `functions` lists every function at or above `minLines`, never truncated by
-  `--limit`, sorted by `crap` descending, then `file`, `line`, `column`.
+  `--limit`, sorted by `crap` descending, then `file`, `line`, `column`, with
+  `ignored` rows after all others.
 - `file` is relative to the working directory with `/` separators. `line` and
   `column` are one-based and point at the function's first token.
 - `coverage` is a percentage from 0 to 100. `crap` and `coverage` are
@@ -310,7 +321,8 @@ changed in meaning. A breaking change bumps `schemaVersion`.
 - `evidence` is `statements`, `function`, `ignored` or `missing` (see
   [Coverage](#coverage)).
 - `level` is `fail` (above `max`, or missing evidence), `warn` (above `warn`),
-  `ignored` (evidence `ignored`) or `ok`.
+  `ignored` (evidence `ignored`) or `ok`. For `ignored` rows, `coverage` is 0
+  and `crap` is the score at 0% coverage, for reference only.
 - `missingFiles` lists inventoried files with executable code and no coverage
   entry, sorted.
 
@@ -347,8 +359,8 @@ Everything else under `src/` is internal and may change in any release.
 - Nested functions no longer add their decisions to the parent. Parameter and
   destructuring defaults and logical assignment now add decisions.
   Constructors, getters and setters now get rows.
-- Source files without coverage entries now fail the gate. Functions the
-  coverage tool ignored are listed as `ignored` and do not fail. Add `exclude` entries for tests and tooling
+- Source files without coverage entries, and functions without any coverage
+  counter, now fail the gate, unless a coverage ignore comment covers them. Add `exclude` entries for tests and tooling
   (for example `"exclude": [".test.ts", "vitest.config"]`) if your `include`
   matches them.
 - `--metrics`, `--max-crap`, the `metrics` and `maxCrap` config keys, and

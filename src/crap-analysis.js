@@ -43,7 +43,8 @@ export async function analyzeSource({
 		sourceText,
 	});
 	const adapter = { ...defaultAdapter, sourceFile };
-	const functions = collectFunctions(adapter, filePath);
+	const ignore = findIgnoreComments(sourceText);
+	const functions = collectFunctions(adapter, filePath, ignore);
 
 	if (coverage) {
 		assertStatementsInSource(coverage, sourceText, filePath);
@@ -51,8 +52,15 @@ export async function analyzeSource({
 	}
 
 	return {
-		executable: functions.length > 0 || hasExecutableModuleStatements(adapter),
-		functions: functions.map(({ risk }) => {
+		executable:
+			!ignore.file &&
+			(functions.length > 0 || hasExecutableModuleStatements(adapter)),
+		functions: functions.map(({ ignored, risk }) => {
+			// No counters is only acceptable where an ignore comment removed them.
+			if (ignored && risk.evidence === "missing") {
+				risk.evidence = "ignored";
+			}
+
 			risk.crapScore = calculateCrapScore({
 				complexity: risk.complexity,
 				coverage: risk.coveragePercent,
@@ -118,16 +126,26 @@ function addsDecisionPath({ SyntaxKind }, node) {
 	}
 }
 
-function collectFunctions(adapter, filePath) {
-	const { sourceFile } = adapter;
+function collectFunctions(adapter, filePath, ignore) {
+	const { SyntaxKind, sourceFile } = adapter;
 	const functions = [];
 
 	function visit(node) {
+		const start = toPosition(sourceFile, node.getStart(sourceFile));
+
+		// An `ignore next` comment covers the outermost node after it.
+		if (
+			node.kind !== SyntaxKind.SourceFile &&
+			ignore.nextTargets.delete(positionKey(start))
+		) {
+			ignore.ranges.push({ end: toPosition(sourceFile, node.getEnd()), start });
+		}
+
 		if (isFunctionLikeNode(adapter, node) && node.body) {
-			const start = toPosition(sourceFile, node.getStart(sourceFile));
 			const end = toPosition(sourceFile, node.getEnd());
 
 			functions.push({
+				ignored: isIgnored(ignore, start),
 				range: { end, start },
 				risk: {
 					complexity: calculateCyclomaticComplexity(node, adapter),
@@ -194,9 +212,6 @@ function assignStatementCoverage(functions, coverage) {
 		if (counters.length === 1) {
 			risk.coveragePercent = coverage.f[counters[0]] > 0 ? 100 : 0;
 			risk.evidence = "function";
-		} else if (counters.length === 0) {
-			// Instrumented file, no counters: an ignore hint removed them.
-			risk.evidence = "ignored";
 		}
 	}
 }
@@ -234,9 +249,97 @@ function comparePositions(left, right) {
 	return left.line - right.line || left.column - right.column;
 }
 
+// The line terminators TypeScript and Babel recognise.
+const lineTerminatorPattern = /\r\n|[\n\r\u2028\u2029]/g;
+const commentPattern = /\/\*([\s\S]*?)\*\/|\/\/([^\n\r\u2028\u2029]*)/g;
+const ignoreDirectivePattern =
+	/^\s*(?:istanbul|v8|c8)\s+ignore\s+(next|start|stop|file)(?:\s+(\d+))?(?=\W|$)/;
+const triviaPattern = /(?:\s|\/\*[\s\S]*?\*\/|\/\/[^\n\r\u2028\u2029]*)*/y;
+
+// Coverage tools drop counters for code under these comments:
+// `istanbul|v8|c8 ignore next [lines]`, `ignore start` … `ignore stop`, `ignore file`.
+function findIgnoreComments(sourceText) {
+	const lineStarts = [0];
+
+	for (const match of sourceText.matchAll(lineTerminatorPattern)) {
+		lineStarts.push(match.index + match[0].length);
+	}
+
+	const toSourcePosition = (offset) => {
+		const line = lineStarts.findLastIndex((lineStart) => lineStart <= offset);
+		return { column: offset - lineStarts[line], line: line + 1 };
+	};
+	const ignore = {
+		file: false,
+		lineRanges: [],
+		nextTargets: new Set(),
+		ranges: [],
+	};
+	let regionStart;
+
+	for (const match of sourceText.matchAll(commentPattern)) {
+		const directive = ignoreDirectivePattern.exec(match[1] ?? match[2]);
+
+		if (!directive) {
+			continue;
+		}
+
+		const [, kind, lineCount] = directive;
+		const commentEnd = match.index + match[0].length;
+
+		if (kind === "file") {
+			ignore.file = true;
+		} else if (kind === "start") {
+			regionStart ??= toSourcePosition(commentEnd);
+		} else if (kind === "stop" && regionStart) {
+			ignore.ranges.push({
+				end: toSourcePosition(match.index),
+				start: regionStart,
+			});
+			regionStart = undefined;
+		} else if (kind === "next" && lineCount) {
+			// c8 style: the next N lines.
+			const { line } = toSourcePosition(commentEnd);
+			ignore.lineRanges.push([line + 1, line + Number(lineCount)]);
+		} else if (kind === "next") {
+			triviaPattern.lastIndex = commentEnd;
+			triviaPattern.exec(sourceText);
+			ignore.nextTargets.add(
+				positionKey(toSourcePosition(triviaPattern.lastIndex)),
+			);
+		}
+	}
+
+	if (regionStart) {
+		ignore.ranges.push({
+			end: { column: 0, line: Number.POSITIVE_INFINITY },
+			start: regionStart,
+		});
+	}
+
+	return ignore;
+}
+
+function isIgnored(ignore, position) {
+	return (
+		ignore.file ||
+		ignore.ranges.some(
+			(range) =>
+				comparePositions(range.start, position) <= 0 &&
+				comparePositions(position, range.end) < 0,
+		) ||
+		ignore.lineRanges.some(
+			([first, last]) => position.line >= first && position.line <= last,
+		)
+	);
+}
+
+function positionKey({ column, line }) {
+	return `${line}:${column}`;
+}
+
 function assertStatementsInSource(coverage, sourceText, filePath) {
-	// The line terminators TypeScript and Babel recognise.
-	const lines = sourceText.split(/\r\n|[\n\r\u2028\u2029]/);
+	const lines = sourceText.split(lineTerminatorPattern);
 
 	for (const { start } of Object.values(coverage.statementMap)) {
 		const line = lines[start.line - 1];

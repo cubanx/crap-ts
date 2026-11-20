@@ -97,7 +97,7 @@ test("never uses a nested function's counter for its parent", async () => {
 	});
 
 	// The parent never borrows the child's counter.
-	assert.equal(parent.evidence, "ignored");
+	assert.equal(parent.evidence, "missing");
 	assert.equal(child.evidence, "function");
 });
 
@@ -365,17 +365,70 @@ test("keeps a curried arrow's body statement and counter with the outer arrow in
 	);
 });
 
-test("marks instrumented functions without any counter as ignored", async () => {
-	// `/* istanbul ignore next */` and `/* v8 ignore */` leave no counters.
-	const [ignored, covered] = await analyzeFileRisk({
+test("marks functions under a coverage ignore comment as ignored", async () => {
+	const risks = await analyzeFileRisk({
 		coverage: coverage({ statements: [[location(3, 18, 27), 1]] }),
 		filePath: "ignored.ts",
-		sourceText:
-			"/* istanbul ignore next */\nfunction tribble() { return 1; }\nfunction worf() { return 2; }",
+		sourceText: `/* istanbul ignore next */
+function tribble() { return 1; }
+function worf() { return 2; }
+// istanbul ignore next
+export const quark = () => { return 3; };
+/* v8 ignore next */
+class Ferengi { acquire() { return 4; } }
+/* v8 ignore start */
+function rom() { return 5; }
+function nog() { return 6; }
+/* v8 ignore stop */
+function leeta() { return 7; }
+/* c8 ignore next 2 */
+function brunt() { return 8; }
+function zek() { return 9; }
+function ishka() { return 10; }`,
 	});
 
-	assert.equal(ignored.evidence, "ignored");
+	assert.deepEqual(
+		risks.map((risk) => [risk.name, risk.evidence]),
+		[
+			["tribble", "ignored"],
+			["worf", "statements"],
+			["quark", "ignored"],
+			["acquire", "ignored"],
+			["rom", "ignored"],
+			["nog", "ignored"],
+			["leeta", "missing"],
+			["brunt", "ignored"],
+			["zek", "ignored"],
+			["ishka", "missing"],
+		],
+	);
+});
+
+test("keeps functions added after the coverage run as missing evidence", async () => {
+	// Appended code keeps every recorded statement position valid.
+	const [covered, added] = await analyzeFileRisk({
+		coverage: coverage({ statements: [[location(1, 18, 27), 1]] }),
+		filePath: "garak.ts",
+		sourceText:
+			"function garak() { return 1; }\nfunction added() { return 2; }",
+	});
+
 	assert.equal(covered.evidence, "statements");
+	assert.equal(added.evidence, "missing");
+});
+
+test("treats a file-level ignore comment as declaration-only", async () => {
+	const { executable, functions } = await analyzeSource({
+		filePath: "holosuite.ts",
+		sourceText:
+			"/* v8 ignore file */\nexport const program = vicFontaine();\nfunction sing() { return 1; }",
+	});
+
+	assert.equal(executable, false);
+	assert.deepEqual(
+		functions.map((risk) => risk.evidence),
+		["ignored"],
+	);
 });
 
 test("uses a function counter placed at the function's first token", async () => {

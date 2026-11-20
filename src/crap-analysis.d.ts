@@ -31,7 +31,7 @@ export interface FunctionRisk {
 	/** Statements whose start lies in this function and not in a nested one. */
 	statements: number;
 	coveredStatements: number;
-	/** `statements`: owned statement counters; `function`: the function's own counter (no owned statements); `ignored`: instrumented file but no counter (coverage ignore hint); `missing`: no coverage for the file. */
+	/** `statements`: owned statement counters; `function`: the function's own counter (no owned statements); `ignored`: no counter, under a coverage ignore comment; `missing`: no coverage for the file. */
 	evidence: "statements" | "function" | "ignored" | "missing";
 	crapScore: number;
 }
