@@ -6,7 +6,6 @@ import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 
 import { runCrapAudit } from "./crap-runner.js";
-import { buildCrapScores } from "./crap-score.js";
 
 const helpText = `crap-ts
 
@@ -14,24 +13,20 @@ Run a focused TypeScript quality audit.
 
 Usage:
   crap-ts score [--coverage-file coverage/unit/coverage-final.json] [--coverage-command "npm run test:coverage"]
-  crap-ts score --metrics complexity-metrics.json --coverage-file coverage/coverage-summary.json [--max-crap 30]
-
-Legacy:
-  crap-ts --metrics complexity-metrics.json --coverage-file coverage/coverage-summary.json
 
 Options:
   --config <path>  Config file path. Defaults to .crap-ts.json when present.
   --coverage-file <path>
-                    Istanbul coverage JSON path.
+                    Istanbul coverage-final.json path. Repeat to merge several runs.
   --coverage-command <cmd>
                     Command to generate coverage before scoring.
   --all            Print every analyzed function instead of applying --limit.
-  --include <text> Only analyze coverage files whose path contains this text.
-  --limit <n>      Number of rows to print for direct CRAP audit. Defaults to 20.
-  --metrics <path>  JSON file with [{ "file", "name", "complexity" }] entries.
+  --include <text> Only analyze source files whose path contains this text.
+  --exclude <text> Skip source files whose path contains this text.
+  --json           Print the full JSON report (schema version 1) instead of text.
+  --limit <n>      Number of rows to print in the text report. Defaults to 20.
   --min-lines <n>  Ignore functions shorter than this. Defaults to 10.
-  --max <n>        Fail direct CRAP audit when any row is above this score. Defaults to 30.
-  --max-crap <n>    Fail CRAP scoring when any row is above this score.
+  --max <n>        Fail when any function's CRAP score is above this. Defaults to 30.
   --warn <n>       Warn, without failing, when any row is above this score.
   --report-only    Print CRAP report without failing on threshold.
   --skip-coverage  Do not run the coverage command.
@@ -41,30 +36,27 @@ Options:
 const defaultConfigPath = ".crap-ts.json";
 
 export function parseCliArgs(argv, { cwd = process.cwd() } = {}) {
-	const command = getCommand(argv);
-	const args = command === "legacy" ? argv : argv.slice(1);
-	const { positionals, values } = parseArgs({
+	const [command, ...args] = argv;
+	const { values } = parseArgs({
 		args,
-		allowPositionals: true,
 		options: {
 			all: { type: "boolean" },
 			config: { type: "string" },
-			"coverage-file": { type: "string" },
+			"coverage-file": { type: "string", multiple: true },
 			"coverage-command": { type: "string" },
+			exclude: { type: "string", multiple: true },
 			help: { type: "boolean", short: "h" },
 			include: { type: "string", multiple: true },
+			json: { type: "boolean" },
 			limit: { type: "string" },
 			max: { type: "string" },
-			"max-crap": { type: "string" },
-			metrics: { type: "string" },
 			"min-lines": { type: "string" },
 			"report-only": { type: "boolean" },
 			"skip-coverage": { type: "boolean" },
 			warn: { type: "string" },
 		},
 	});
-	const config =
-		command === "help" || values.help ? {} : readConfig(values.config, cwd);
+	const config = values.help ? {} : readConfig(values.config, cwd);
 
 	return applyDefaults(
 		mergeConfigWithCli(config, {
@@ -72,15 +64,14 @@ export function parseCliArgs(argv, { cwd = process.cwd() } = {}) {
 			all: values.all,
 			configPath: values.config,
 			coverageCommand: values["coverage-command"],
-			coveragePath: values["coverage-file"],
+			coveragePaths: values["coverage-file"],
+			excludes: values.exclude,
 			help: values.help,
 			includes: values.include,
+			json: values.json,
 			limit: parseOptionalNumber(values.limit, "--limit"),
-			maxCrap: parseOptionalNumber(values["max-crap"], "--max-crap"),
 			maxScore: parseOptionalNumber(values.max, "--max"),
-			metricsPath: values.metrics,
 			minLines: parseOptionalNumber(values["min-lines"], "--min-lines"),
-			paths: positionals,
 			reportOnly: values["report-only"],
 			skipCoverage: values["skip-coverage"],
 			warnScore: parseOptionalNumber(values.warn, "--warn"),
@@ -89,96 +80,40 @@ export function parseCliArgs(argv, { cwd = process.cwd() } = {}) {
 }
 
 export async function main(argv = process.argv.slice(2)) {
-	const options = parseCliArgs(argv);
+	const [command] = argv;
 
-	if (options.help || options.command === "help") {
+	if (!command || ["help", "--help", "-h"].includes(command)) {
 		console.log(helpText);
 		return 0;
 	}
 
-	if (
-		options.command === "score" ||
-		options.metricsPath ||
-		options.coveragePath
-	) {
-		return runScore(options);
-	}
-
-	if (options.command !== "legacy") {
-		console.error(`Unknown command: ${options.command}`);
-		return 2;
-	}
-
-	console.error(
-		"Usage error: run `crap-ts score --help` for supported commands.",
-	);
-	return 2;
-}
-
-async function runScore(options) {
-	if (!options.metricsPath) {
-		return runCrapAudit(options);
-	}
-
-	if (!options.coveragePath) {
-		console.error("CRAP scoring requires both --metrics and --coverage-file.");
-		return 2;
-	}
-
-	if (
-		options.maxCrap &&
-		options.warnScore !== undefined &&
-		options.warnScore > options.maxCrap
-	) {
+	if (command !== "score") {
 		console.error(
-			`CRAP warn (${options.warnScore}) must not exceed max-crap (${options.maxCrap}).`,
+			`Unknown command: ${command}. Run \`crap-ts score\`; see \`crap-ts --help\`.`,
 		);
 		return 2;
 	}
 
-	const metrics = JSON.parse(readFileSync(options.metricsPath, "utf8"));
-	const coverageSummary = JSON.parse(
-		readFileSync(options.coveragePath, "utf8"),
-	);
-	const scores = buildCrapScores({ coverageSummary, metrics });
-	const failingScores = options.maxCrap
-		? scores.filter((score) => score.crap > options.maxCrap)
-		: [];
-	const warningScores =
-		options.warnScore === undefined
-			? []
-			: scores.filter(
-					(score) =>
-						score.crap > options.warnScore &&
-						!(options.maxCrap && score.crap > options.maxCrap),
-				);
+	let options;
 
-	console.log(JSON.stringify(scores, null, 2));
-
-	if (warningScores.length > 0) {
-		console.error(
-			`CRAP warning: ${warningScores.length} row(s) above ${options.warnScore}.`,
-		);
+	try {
+		options = parseCliArgs(argv);
+	} catch (error) {
+		console.error(`Usage error: ${error.message}`);
+		return 2;
 	}
 
-	if (failingScores.length > 0) {
-		console.error(
-			`CRAP threshold failed: ${failingScores.length} row(s) exceeded ${options.maxCrap}.`,
-		);
+	if (options.help) {
+		console.log(helpText);
+		return 0;
+	}
+
+	try {
+		return await runCrapAudit(options);
+	} catch (error) {
+		console.error(`Error: ${error.message}`);
 		return 1;
 	}
-
-	return 0;
-}
-
-function getCommand(argv) {
-	const firstArg = argv[0];
-
-	if (firstArg === "score" || firstArg === "help") {
-		return firstArg;
-	}
-
-	return "legacy";
 }
 
 function parseOptionalNumber(value, label) {
@@ -221,19 +156,54 @@ function mergeConfigWithCli(config, cliOptions) {
 	};
 }
 
+const configKeys = new Set([
+	"all",
+	"coverageCommand",
+	"coverageFile",
+	"exclude",
+	"include",
+	"json",
+	"limit",
+	"max",
+	"minLines",
+	"reportOnly",
+	"skipCoverage",
+	"warn",
+]);
+
 function normalizeConfig(config) {
+	if (!config || typeof config !== "object" || Array.isArray(config)) {
+		throw new TypeError(`${defaultConfigPath} must contain a JSON object.`);
+	}
+
+	const unknownKeys = Object.keys(config).filter((key) => !configKeys.has(key));
+
+	if (unknownKeys.length > 0) {
+		throw new TypeError(
+			`Unknown ${defaultConfigPath} key(s): ${unknownKeys.join(", ")}.`,
+		);
+	}
+
 	return stripUndefined({
-		all: config.all,
-		coverageCommand: config.coverageCommand,
-		coveragePath: config.coverageFile,
+		all: parseConfigType(config.all, "all", "boolean"),
+		coverageCommand: parseConfigType(
+			config.coverageCommand,
+			"coverageCommand",
+			"string",
+		),
+		coveragePaths: normalizeConfigList(config.coverageFile, "coverageFile"),
+		excludes: normalizeConfigList(config.exclude, "exclude"),
 		includes: normalizeConfigList(config.include, "include"),
+		json: parseConfigType(config.json, "json", "boolean"),
 		limit: parseConfigNumber(config.limit, "limit"),
-		maxCrap: parseConfigNumber(config.maxCrap, "maxCrap"),
 		maxScore: parseConfigNumber(config.max, "max"),
-		metricsPath: config.metrics,
 		minLines: parseConfigNumber(config.minLines, "minLines"),
-		reportOnly: config.reportOnly,
-		skipCoverage: config.skipCoverage,
+		reportOnly: parseConfigType(config.reportOnly, "reportOnly", "boolean"),
+		skipCoverage: parseConfigType(
+			config.skipCoverage,
+			"skipCoverage",
+			"boolean",
+		),
 		warnScore: parseConfigNumber(config.warn, "warn"),
 	});
 }
@@ -247,6 +217,14 @@ function parseConfigNumber(value, label) {
 		throw new TypeError(
 			`${label} must be a finite number in ${defaultConfigPath}.`,
 		);
+	}
+
+	return value;
+}
+
+function parseConfigType(value, label, type) {
+	if (value !== undefined && typeof value !== type) {
+		throw new TypeError(`${label} must be a ${type} in ${defaultConfigPath}.`);
 	}
 
 	return value;
@@ -275,7 +253,9 @@ function applyDefaults(options) {
 		...options,
 		all: options.all ?? false,
 		help: options.help ?? false,
+		excludes: options.excludes ?? [],
 		includes: options.includes ?? [],
+		json: options.json ?? false,
 		reportOnly: options.reportOnly ?? false,
 		skipCoverage: options.skipCoverage ?? false,
 	};

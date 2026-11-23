@@ -5,6 +5,7 @@ import {
 	mkdirSync,
 	mkdtempSync,
 	readdirSync,
+	readFileSync,
 	rmSync,
 	writeFileSync,
 } from "node:fs";
@@ -42,6 +43,8 @@ function verifyConsumerTypescript(version) {
 				"score",
 				"--coverage-file",
 				"coverage-final.json",
+				"--include",
+				"sample.ts",
 				"--min-lines",
 				"1",
 				"--max",
@@ -63,6 +66,8 @@ function verifyConsumerTypescript(version) {
 				"score",
 				"--coverage-file",
 				"coverage-final.json",
+				"--include",
+				"sample.ts",
 				"--min-lines",
 				"1",
 				"--max",
@@ -77,6 +82,40 @@ function verifyConsumerTypescript(version) {
 			/sample\.ts:1 \| riskyDecision \| CRAP 90\.0 \| complexity 9 \| coverage 0% \| 19 lines/,
 		);
 		assert.doesNotMatch(reportOnly.stderr, /CRAP check failed/);
+
+		const json = run(
+			binPath(consumer, "crap-ts"),
+			[
+				"score",
+				"--coverage-file",
+				"coverage-final.json",
+				"--include",
+				"sample.ts",
+				"--min-lines",
+				"1",
+				"--json",
+			],
+			{ allowFailure: true, cwd: consumer },
+		);
+		const report = JSON.parse(json.stdout);
+		assert.equal(json.status, 1);
+		assert.equal(report.schemaVersion, 1);
+		assert.deepEqual(
+			report.functions.map(({ complexity, crap, evidence, name }) => ({
+				complexity,
+				crap,
+				evidence,
+				name,
+			})),
+			[
+				{
+					complexity: 9,
+					crap: 90,
+					evidence: "statements",
+					name: "riskyDecision",
+				},
+			],
+		);
 
 		run(
 			binPath(consumer, "tsc"),
@@ -149,37 +188,29 @@ function writeFixtureFiles(consumer) {
 }
 `,
 	);
+	const riskyCoverage = JSON.parse(
+		readFileSync(join(repoRoot, "fixtures/risky-coverage-final.json"), "utf8"),
+	)["fixtures/risky.ts"];
 	writeFileSync(
 		join(consumer, "coverage-final.json"),
 		JSON.stringify(
-			{
-				"sample.ts": {
-					f: { 0: 0 },
-					fnMap: {
-						0: {
-							line: 1,
-							loc: { end: { line: 18 }, start: { line: 1 } },
-						},
-					},
-				},
-			},
+			{ "sample.ts": { ...riskyCoverage, path: "sample.ts" } },
 			null,
 			"\t",
 		),
 	);
 	writeFileSync(
 		join(consumer, "index.ts"),
-		`import { analyzeFileRisk } from "crap-ts/crap-analysis";
+		`import { analyzeFileRisk, type FunctionRisk } from "crap-ts";
 
 const risks = await analyzeFileRisk({
-\tcoverageFunctions: [],
 \tfilePath: "sample.ts",
-\tminLines: 1,
 \tsourceFilePath: "sample.ts",
 \tsourceText: "function f() { return 1; }",
 });
+const evidence: FunctionRisk["evidence"] | undefined = risks[0]?.evidence;
 
-console.log(risks.length);
+console.log(risks.length, evidence);
 `,
 	);
 	writeFileSync(
@@ -190,8 +221,13 @@ import { join } from "node:path";
 import ts from "typescript";
 import {
 \tanalyzeFileRisk,
+\tcalculateCrapScore,
 \tcalculateCyclomaticComplexity,
-} from "crap-ts/crap-analysis";
+\trunCrapAudit,
+} from "crap-ts";
+
+assert.equal(calculateCrapScore({ complexity: 10, coverage: 50 }), 22.5);
+assert.equal(typeof runCrapAudit, "function");
 
 const complexitySource = \`function choose(value, list) {
 \twhile (value > 0) {
@@ -242,9 +278,7 @@ if (ts.createSourceFile) {
 }
 
 const risks = await analyzeFileRisk({
-\tcoverageFunctions: [],
 \tfilePath: "in-memory.ts",
-\tminLines: 1,
 \tsourceFilePath: "sample.ts",
 \tsourceText: "function fromMemory() { return 1; }",
 });
