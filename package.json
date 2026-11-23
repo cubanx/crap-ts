@@ -1,6 +1,6 @@
 {
 	"name": "crap-ts",
-	"version": "0.2.0",
+	"version": "1.0.0",
 	"description": "Small CRAP-score audit helper for TypeScript projects.",
 	"repository": {
 		"type": "git",
