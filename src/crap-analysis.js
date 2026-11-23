@@ -199,11 +199,9 @@ function assignStatementCoverage(functions, coverage) {
 		owner.risk.coveredStatements += coverage.s[id] > 0 ? 1 : 0;
 	}
 
-	const counterStarts = new Set(
-		Object.values(coverage.fnMap).map(({ loc }) => positionKey(loc.start)),
-	);
+	const v8Layout = hasFirstTokenCounters(functions, coverage.fnMap);
 	const countersByOwner = groupCountersBy(coverage.fnMap, (start) =>
-		findCounterOwner(functions, start, counterStarts),
+		findCounterOwner(functions, start, v8Layout),
 	);
 
 	for (const fn of functions) {
@@ -225,11 +223,26 @@ function assignStatementCoverage(functions, coverage) {
 }
 
 // Istanbul places a function counter at the function's body; per-line V8
-// converters place it at the function's first token. The two positions meet
-// only where an arrow is another arrow's expression body (`a => b => 1`):
-// there the outer arrow owns the counter, unless it has a first-token counter
-// of its own, which marks the V8 layout.
-function findCounterOwner(functions, start, counterStarts) {
+// converters place it at the function's first token. Only V8 puts a counter at
+// the first token of a function that is not another arrow's expression body.
+function hasFirstTokenCounters(functions, fnMap) {
+	const counterStarts = new Set(
+		Object.values(fnMap).map(({ loc }) => positionKey(loc.start)),
+	);
+	const expressionBodies = new Set(
+		functions.map((fn) => positionKey(fn.bodyStart)),
+	);
+
+	return functions.some((fn) => {
+		const start = positionKey(fn.range.start);
+		return !expressionBodies.has(start) && counterStarts.has(start);
+	});
+}
+
+// The two layouts meet only where an arrow is another arrow's expression body
+// (`a => b => 1`): Istanbul's counter there is the outer arrow's, V8's is the
+// inner arrow's.
+function findCounterOwner(functions, start, v8Layout) {
 	const startingHere = functions.findLast(
 		(fn) => comparePositions(fn.range.start, start) === 0,
 	);
@@ -243,9 +256,7 @@ function findCounterOwner(functions, start, counterStarts) {
 		(fn) => comparePositions(fn.bodyStart, start) === 0,
 	);
 
-	return parent && !counterStarts.has(positionKey(parent.range.start))
-		? parent
-		: startingHere;
+	return parent && !v8Layout ? parent : startingHere;
 }
 
 function groupCountersBy(fnMap, getFunction) {

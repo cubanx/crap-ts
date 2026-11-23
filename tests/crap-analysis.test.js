@@ -623,3 +623,34 @@ test("finds a real ignore comment after comment-like text in a string", async ()
 
 	assert.equal(risk.evidence, "ignored");
 });
+
+test("keeps Istanbul counters of a triple-curried chain with their owners", async () => {
+	// istanbul-lib-instrument output for this source: each outer arrow's
+	// expression body (statement and counter) starts at the next arrow.
+	const risks = await analyzeFileRisk({
+		coverage: coverage({
+			f: { 0: 1, 1: 1, 2: 1 },
+			fnMap: {
+				0: { loc: location(1, 24, 39) },
+				1: { loc: location(1, 31, 39) },
+				2: { loc: location(1, 37, 39) },
+			},
+			statements: [
+				[location(1, 17, 39), 1],
+				[location(1, 24, 39), 1],
+				[location(1, 31, 39), 1],
+			],
+		}),
+		filePath: "kira.ts",
+		sourceText: "export const a = (x) => (y) => () => {};",
+	});
+
+	assert.deepEqual(
+		risks.map((risk) => [risk.evidence, risk.coveragePercent]),
+		[
+			["statements", 100],
+			["statements", 100],
+			["function", 100],
+		],
+	);
+});
