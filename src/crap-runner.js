@@ -8,7 +8,14 @@ import { normalizePath } from "./path-utils.js";
 const reportSchemaVersion = 1;
 
 const sourceFilePattern = /\.[cm]?tsx?$/;
+// The inventory walk finds TypeScript only, but JavaScript sources named in
+// coverage are scored too, as in 2.0.
+const javaScriptFilePattern = /\.[cm]?jsx?$/;
 const declarationFilePattern = /\.d\.[cm]?ts$/;
+// The test files Vitest and Jest find by default: `*.test.*`, `*.spec.*`
+// (and Vitest's `*.test-d.*` type tests), and anything under `__tests__/`.
+const testFilePattern =
+	/(?:^|\/)__tests__\/|\.(?:test|spec)(?:-d)?\.[cm]?[jt]sx?$/;
 
 export async function runCrapAudit({
 	all = false,
@@ -19,6 +26,7 @@ export async function runCrapAudit({
 	excludes = [],
 	failOnIgnored = false,
 	includes = [],
+	includeTests = false,
 	json = false,
 	limit = 20,
 	maxScore = 30,
@@ -97,19 +105,42 @@ export async function runCrapAudit({
 		root,
 		allowEmptyCoverage,
 	);
-	const isSelected = (path) => {
+	const matchesFilters = (path) => {
 		const relativePath = relative(root, path);
 		return (
 			matchesAny(relativePath, includes, true) &&
 			!matchesAny(relativePath, excludes, false)
 		);
 	};
-	const sourcePaths = new Set(listSourceFiles(root).filter(isSelected));
+	const isTestFile = (path) =>
+		testFilePattern.test(normalizePath(relative(root, path)));
+	const candidatePaths = new Set(listSourceFiles(root).filter(matchesFilters));
 
+	// Coverage tools also list non-source modules (CSS, JSON) and even
+	// directories; only TypeScript and JavaScript sources can be scored.
 	for (const path of coverageByFile.keys()) {
-		if (existsSync(path) && isSelected(path)) {
-			sourcePaths.add(path);
+		if (
+			isCoverageSourceFile(path) &&
+			existsSync(path) &&
+			matchesFilters(path)
+		) {
+			candidatePaths.add(path);
 		}
+	}
+
+	const sourcePaths = new Set(
+		[...candidatePaths].filter((path) => includeTests || !isTestFile(path)),
+	);
+
+	if (sourcePaths.size === 0) {
+		const testHint =
+			candidatePaths.size > 0
+				? ` The ${candidatePaths.size} matching file(s) were skipped as test files; pass --include-tests to analyze them.`
+				: "";
+		console.error(
+			`No source files matched under ${root}. Check --include and --exclude; patterns are relative to the working directory, for example --include 'src/**'.${testHint}`,
+		);
+		return 1;
 	}
 
 	const functions = [];
@@ -157,6 +188,13 @@ export async function runCrapAudit({
 		console.error("");
 		console.error(
 			`CRAP warning: ${summary.warning} function(s) above ${warnScore}. Add coverage or simplify them before they cross ${maxScore}.`,
+		);
+	}
+
+	if (summary.functions === 0) {
+		console.error("");
+		console.error(
+			`No functions checked in ${summary.files} source file(s). Check --include, --exclude and --min-lines (${minLines}).`,
 		);
 	}
 
@@ -233,7 +271,9 @@ function buildReport({
 		thresholds: { max: maxScore, warn: warnScore ?? null, minLines },
 		summary: {
 			...summary,
+			// A gate that checks nothing must not pass.
 			passed:
+				summary.functions > 0 &&
 				summary.aboveMax === 0 &&
 				summary.missingEvidence === 0 &&
 				summary.missingFiles === 0 &&
@@ -463,12 +503,16 @@ function listSourceFiles(directory) {
 				: listSourceFiles(path);
 		}
 
-		return entry.isFile() &&
-			sourceFilePattern.test(entry.name) &&
-			!declarationFilePattern.test(entry.name)
-			? [path]
-			: [];
+		return entry.isFile() && isSourceFile(entry.name) ? [path] : [];
 	});
+}
+
+function isSourceFile(path) {
+	return sourceFilePattern.test(path) && !declarationFilePattern.test(path);
+}
+
+function isCoverageSourceFile(path) {
+	return isSourceFile(path) || javaScriptFilePattern.test(path);
 }
 
 function matchesAny(path, patterns, emptyResult) {

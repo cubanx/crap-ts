@@ -29,6 +29,7 @@ test("parses direct audit flags", () => {
 		"--all",
 		"--fail-on-ignored",
 		"--allow-empty-coverage",
+		"--include-tests",
 		"--report-only",
 		"--max",
 		"40",
@@ -52,6 +53,7 @@ test("parses direct audit flags", () => {
 	assert.equal(options.all, true);
 	assert.equal(options.failOnIgnored, true);
 	assert.equal(options.allowEmptyCoverage, true);
+	assert.equal(options.includeTests, true);
 	assert.equal(options.reportOnly, true);
 	assert.equal(options.maxScore, 40);
 	assert.equal(options.warnScore, 35);
@@ -80,6 +82,7 @@ test("loads default .crap-ts.json config", () => {
 			minLines: 3,
 			reportOnly: true,
 			allowEmptyCoverage: true,
+			includeTests: true,
 			skipCoverage: true,
 			warn: 35,
 		}),
@@ -103,8 +106,13 @@ test("loads default .crap-ts.json config", () => {
 	assert.equal(options.minLines, 3);
 	assert.equal(options.reportOnly, true);
 	assert.equal(options.allowEmptyCoverage, true);
+	assert.equal(options.includeTests, true);
 	assert.equal(options.skipCoverage, true);
 	assert.equal(options.warnScore, 35);
+});
+
+test("leaves test files out by default", () => {
+	assert.equal(parseCliArgs(["score"]).includeTests, false);
 });
 
 test("loads explicit config path", () => {
@@ -226,20 +234,37 @@ test("reports invalid flags as usage errors", async () => {
 	]);
 });
 
+test("points positional directories to --include", async () => {
+	const messages = await captureConsole(async () => {
+		assert.equal(await main(["score", "src", "scripts"]), 2);
+	});
+
+	assert.equal(messages.errors.length, 1);
+	assert.match(messages.errors[0], /^Usage error: Unexpected argument 'src'/);
+	assert.match(messages.errors[0], /--include 'src\/\*\*'/);
+});
+
 test("rejects an empty run by default and allows an explicit opt-out", () => {
 	const cwd = mkdtempSync(join(tmpdir(), "crap-cli-empty-coverage-"));
 	const cli = fileURLToPath(new URL("../src/cli.js", import.meta.url));
 
 	try {
-		const source = "export const station = 'Deep Space Nine';";
+		const source = "export const station = () => 'Deep Space Nine';";
 		writeFileSync(join(cwd, "node.json"), "{}");
 		writeFileSync(join(cwd, "ops.ts"), source);
 		writeFileSync(
 			join(cwd, "browser.json"),
 			JSON.stringify({
 				"ops.ts": {
-					f: {},
-					fnMap: {},
+					f: { 0: 1 },
+					fnMap: {
+						0: {
+							loc: {
+								start: { line: 1, column: 23 },
+								end: { line: 1, column: source.length - 1 },
+							},
+						},
+					},
 					s: { 0: 1 },
 					statementMap: {
 						0: {
@@ -257,6 +282,8 @@ test("rejects an empty run by default and allows an explicit opt-out", () => {
 			"node.json",
 			"--coverage-file",
 			"browser.json",
+			"--min-lines",
+			"1",
 			"--json",
 		];
 		const normal = spawnSync(process.execPath, args, { cwd, encoding: "utf8" });
@@ -274,7 +301,7 @@ test("rejects an empty run by default and allows an explicit opt-out", () => {
 
 		const nonempty = spawnSync(
 			process.execPath,
-			[cli, "score", "--coverage-file", "browser.json"],
+			[cli, "score", "--coverage-file", "browser.json", "--min-lines", "1"],
 			{ cwd, encoding: "utf8" },
 		);
 		assert.equal(nonempty.status, 0, nonempty.stderr);
@@ -291,6 +318,7 @@ test("rejects non-boolean and non-string config values", async () => {
 			[{ failOnIgnored: "true" }, /failOnIgnored must be a boolean/],
 			[{ reportOnly: "false" }, /reportOnly must be a boolean/],
 			[{ allowEmptyCoverage: 1 }, /allowEmptyCoverage must be a boolean/],
+			[{ includeTests: "yes" }, /includeTests must be a boolean/],
 			[{ skipCoverage: 1 }, /skipCoverage must be a boolean/],
 			[
 				{ coverageCommand: ["npm", "test"] },

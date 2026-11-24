@@ -336,6 +336,330 @@ test("matches coverage keys when the working directory differs only in case", as
 	});
 });
 
+test("scores only TypeScript sources from absolute coverage keys under relative includes", async () => {
+	await withProject(
+		{
+			"src/first.ts": firstSource,
+			"src/portrait.css": ".odo { color: amber; }",
+			"src/catalog.json": '{ "station": "Deep Space Nine" }',
+			"src/types.d.ts": "declare const quark: string;",
+			"scripts/second.ts": secondSource,
+			"docs/notes.md": "# Ops",
+		},
+		async (cwd) => {
+			const root = realpathSync.native(cwd);
+			const coverage = branchCoverage([1, 1, 1]);
+			writeFileSync(
+				join(cwd, "coverage-final.json"),
+				JSON.stringify({
+					[root]: coverage,
+					[join(root, "src/first.ts")]: coverage,
+					[join(root, "src/portrait.css")]: coverage,
+					[join(root, "src/catalog.json")]: coverage,
+					[join(root, "src/types.d.ts")]: coverage,
+					[join(root, "scripts/second.ts")]: coverage,
+					[join(root, "docs/notes.md")]: coverage,
+				}),
+			);
+
+			for (const extra of [{}, { includes: ["src/**", "scripts/**"] }]) {
+				const messages = await captureConsole(() =>
+					runCrapAudit({
+						coveragePaths: ["coverage-final.json"],
+						cwd,
+						json: true,
+						minLines: 1,
+						skipCoverage: true,
+						...extra,
+					}),
+				);
+				const report = JSON.parse(messages.logs.join("\n"));
+
+				assert.equal(messages.result, 0, messages.errors.join("\n"));
+				assert.deepEqual(
+					report.functions.map((row) => [row.file, row.evidence]).sort(),
+					[
+						["scripts/second.ts", "statements"],
+						["src/first.ts", "statements"],
+					],
+				);
+				assert.equal(report.summary.files, 2);
+			}
+		},
+	);
+});
+
+test("fails when the filters select no source files", async () => {
+	await withProject(
+		{
+			"coverage-final.json": { "src/first.ts": branchCoverage([1, 1, 1]) },
+			"src/first.ts": firstSource,
+		},
+		async (cwd) => {
+			for (const extra of [
+				{ includes: ["lib/**"] },
+				{ excludes: ["src/**"] },
+				{ includes: ["src/**"], reportOnly: true, excludes: ["first"] },
+			]) {
+				const messages = await captureConsole(() =>
+					runCrapAudit({
+						coveragePaths: ["coverage-final.json"],
+						cwd,
+						json: true,
+						minLines: 1,
+						skipCoverage: true,
+						...extra,
+					}),
+				);
+
+				assert.equal(messages.result, 1, JSON.stringify(extra));
+				assert.deepEqual(messages.logs, []);
+				assert.match(
+					messages.errors.join("\n"),
+					/No source files matched.*--include.*--exclude/s,
+				);
+			}
+		},
+	);
+});
+
+test("names --include-tests when only test files match", async () => {
+	await withProject(
+		{
+			"coverage-final.json": { "src/first.ts": branchCoverage([1, 1, 1]) },
+			"src/first.ts": firstSource,
+			"src/__tests__/first.ts": firstSource,
+			"src/second.test.ts": secondSource,
+		},
+		async (cwd) => {
+			const options = {
+				coveragePaths: ["coverage-final.json"],
+				cwd,
+				minLines: 1,
+				skipCoverage: true,
+			};
+
+			for (const includes of [["src/__tests__/**"], [".test.ts"]]) {
+				const messages = await captureConsole(() =>
+					runCrapAudit({ ...options, includes }),
+				);
+
+				assert.equal(messages.result, 1, includes[0]);
+				assert.match(
+					messages.errors.join("\n"),
+					/No source files matched.*skipped as test files.*--include-tests/s,
+				);
+			}
+
+			const unrelated = await captureConsole(() =>
+				runCrapAudit({ ...options, includes: ["lib/**"] }),
+			);
+			assert.equal(unrelated.result, 1);
+			assert.doesNotMatch(unrelated.errors.join("\n"), /--include-tests/);
+		},
+	);
+});
+
+test("keeps scoring JavaScript sources named in coverage", async () => {
+	// Complexity 14, never run: CRAP 210.
+	const legacySource = `export function legacy(a, b, c, d, e) {
+  if (a) return 1;
+  if (b) return 2;
+  if (c) return 3;
+  if (d) return 4;
+  if (e) return 5;
+  if (a && b) return 6;
+  if (b && c) return 7;
+  if (c && d) return 8;
+  if (d && e) return 9;
+  return 0;
+}
+`;
+	const legacyCoverage = {
+		f: { 0: 0 },
+		fnMap: {
+			0: {
+				loc: { end: { column: 1, line: 12 }, start: { column: 7, line: 1 } },
+			},
+		},
+		s: Object.fromEntries(Array.from({ length: 10 }, (_, index) => [index, 0])),
+		statementMap: Object.fromEntries(
+			Array.from({ length: 10 }, (_, index) => [
+				index,
+				location(index + 2, 2, 18),
+			]),
+		),
+	};
+
+	await withProject(
+		{
+			"src/first.ts": firstSource,
+			"src/legacy.js": legacySource,
+			"src/legacy.mjs": legacySource,
+			"src/legacy.cjs": legacySource,
+			"src/legacy.jsx": legacySource,
+			"src/legacy.test.js": legacySource,
+		},
+		async (cwd) => {
+			const root = realpathSync.native(cwd);
+			writeFileSync(
+				join(cwd, "coverage-final.json"),
+				JSON.stringify({
+					[join(root, "src/first.ts")]: branchCoverage([1, 1, 1]),
+					...Object.fromEntries(
+						["js", "mjs", "cjs", "jsx", "test.js"].map((extension) => [
+							join(root, `src/legacy.${extension}`),
+							legacyCoverage,
+						]),
+					),
+				}),
+			);
+
+			const messages = await captureConsole(() =>
+				runCrapAudit({
+					coveragePaths: ["coverage-final.json"],
+					cwd,
+					json: true,
+					skipCoverage: true,
+				}),
+			);
+			const report = JSON.parse(messages.logs.join("\n"));
+
+			assert.equal(messages.result, 1);
+			assert.deepEqual(
+				report.functions.map((row) => [row.file, row.complexity, row.crap]),
+				[
+					["src/legacy.cjs", 14, 210],
+					["src/legacy.js", 14, 210],
+					["src/legacy.jsx", 14, 210],
+					["src/legacy.mjs", 14, 210],
+				],
+			);
+		},
+	);
+});
+
+test("fails the gate when no functions are checked", async () => {
+	await withProject(
+		{
+			"coverage-final.json": { "src/first.ts": branchCoverage([1, 1, 1]) },
+			"src/first.ts": firstSource,
+		},
+		async (cwd) => {
+			const options = {
+				coveragePaths: ["coverage-final.json"],
+				cwd,
+				minLines: 50,
+				skipCoverage: true,
+			};
+			const strict = await captureConsole(() =>
+				runCrapAudit({ ...options, json: true }),
+			);
+			const report = JSON.parse(strict.logs.join("\n"));
+
+			assert.equal(strict.result, 1);
+			assert.equal(report.summary.functions, 0);
+			assert.equal(report.summary.passed, false);
+			assert.match(strict.errors.join("\n"), /No functions checked/);
+			assert.match(strict.errors.join("\n"), /CRAP check failed/);
+
+			const reportOnly = await captureConsole(() =>
+				runCrapAudit({ ...options, reportOnly: true }),
+			);
+			assert.equal(reportOnly.result, 0);
+			assert.match(reportOnly.errors.join("\n"), /No functions checked/);
+		},
+	);
+});
+
+test("skips common test files by default and scores them with includeTests", async () => {
+	const coverage = branchCoverage([1, 1, 1]);
+	const testFiles = [
+		"src/first.test.ts",
+		"src/first.spec.tsx",
+		"src/first.test.mts",
+		"src/first.spec.cts",
+		"src/first.test-d.ts",
+		"src/__tests__/helpers.ts",
+		"__tests__/root.ts",
+	];
+
+	await withProject(
+		{
+			"coverage-final.json": {
+				"src/first.ts": coverage,
+				"src/__tests__/helpers.ts": coverage,
+			},
+			"src/first.ts": firstSource,
+			// Not test files: the marker must sit right before the extension.
+			"src/first.test.helpers.ts": firstSource,
+			"src/contest.ts": firstSource,
+			"tests/fixture.ts": firstSource,
+			...Object.fromEntries(testFiles.map((path) => [path, firstSource])),
+		},
+		async (cwd) => {
+			const options = {
+				coveragePaths: ["coverage-final.json"],
+				cwd,
+				json: true,
+				minLines: 1,
+				skipCoverage: true,
+			};
+			const byDefault = await captureConsole(() =>
+				runCrapAudit({ ...options, includes: ["src/", "tests/"] }),
+			);
+			const report = JSON.parse(byDefault.logs.join("\n"));
+
+			assert.deepEqual(report.missingFiles, [
+				"src/contest.ts",
+				"src/first.test.helpers.ts",
+				"tests/fixture.ts",
+			]);
+			assert.deepEqual(
+				[...new Set(report.functions.map(({ file }) => file))].sort(),
+				[
+					"src/contest.ts",
+					"src/first.test.helpers.ts",
+					"src/first.ts",
+					"tests/fixture.ts",
+				],
+			);
+
+			const optedIn = await captureConsole(() =>
+				runCrapAudit({ ...options, includeTests: true }),
+			);
+			const optedInReport = JSON.parse(optedIn.logs.join("\n"));
+
+			assert.equal(optedIn.result, 1);
+			for (const path of testFiles.filter(
+				(path) => path !== "src/__tests__/helpers.ts",
+			)) {
+				assert.ok(optedInReport.missingFiles.includes(path), path);
+			}
+			assert.ok(
+				optedInReport.functions.some(
+					(row) =>
+						row.file === "src/__tests__/helpers.ts" &&
+						row.evidence === "statements",
+				),
+			);
+
+			// User filters still apply on top of the default.
+			const excluded = await captureConsole(() =>
+				runCrapAudit({
+					...options,
+					excludes: [".helpers.", "contest", "tests/**"],
+				}),
+			);
+			assert.equal(excluded.result, 0, excluded.errors.join("\n"));
+			assert.deepEqual(
+				JSON.parse(excluded.logs.join("\n")).functions.map(({ file }) => file),
+				["src/first.ts"],
+			);
+		},
+	);
+});
+
 test("fails source files without coverage evidence and exempts declaration-only files", async () => {
 	await withProject(
 		{
@@ -754,7 +1078,8 @@ test("fails functions without counters that no ignore comment covers", async () 
 test("exempts files with a file-level ignore comment from missing evidence", async () => {
 	await withProject(
 		{
-			"coverage-final.json": {},
+			"coverage-final.json": { "first.ts": branchCoverage([1, 1, 1]) },
+			"first.ts": firstSource,
 			"holosuite.ts":
 				"/* istanbul ignore file */\nexport const program = vicFontaine();\n",
 			"types.ts": "/* v8 ignore file */\nexport type Station = string;\n",
@@ -763,11 +1088,11 @@ test("exempts files with a file-level ignore comment from missing evidence", asy
 			for (const failOnIgnored of [false, true]) {
 				const messages = await captureConsole(() =>
 					runCrapAudit({
-						allowEmptyCoverage: true,
 						coveragePaths: ["coverage-final.json"],
 						cwd,
 						failOnIgnored,
 						json: true,
+						minLines: 1,
 						skipCoverage: true,
 					}),
 				);

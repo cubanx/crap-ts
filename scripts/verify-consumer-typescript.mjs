@@ -6,6 +6,7 @@ import {
 	mkdtempSync,
 	readdirSync,
 	readFileSync,
+	realpathSync,
 	rmSync,
 	writeFileSync,
 } from "node:fs";
@@ -117,6 +118,34 @@ function verifyConsumerTypescript(version) {
 			],
 		);
 
+		// Vitest V8 coverage lists side-effect imports such as CSS under
+		// absolute keys; only TypeScript and JavaScript sources may reach the
+		// parser.
+		const sideEffect = run(
+			binPath(consumer, "crap-ts"),
+			[
+				"score",
+				"--coverage-file",
+				"side-effect-coverage.json",
+				"--include",
+				"src/**",
+				"--min-lines",
+				"1",
+			],
+			{ allowFailure: true, cwd: consumer },
+		);
+		assert.equal(sideEffect.status, 0, sideEffect.stderr);
+		assert.match(sideEffect.stdout, /2 functions checked, 0 above 30/);
+		assert.match(
+			sideEffect.stdout,
+			/src\/legacy\.js:3 \| legacyClass \| CRAP 6\.0 \| complexity 2 \| coverage 0%/,
+		);
+		assert.match(
+			sideEffect.stdout,
+			/src\/portrait\.ts:3 \| portraitClass \| CRAP 2\.0 \| complexity 2 \| coverage 100%/,
+		);
+		assert.doesNotMatch(sideEffect.stderr, /panic|ScriptKind/);
+
 		run(
 			binPath(consumer, "tsc"),
 			[
@@ -198,6 +227,69 @@ function writeFixtureFiles(consumer) {
 			null,
 			"\t",
 		),
+	);
+	mkdirSync(join(consumer, "src"));
+	writeFileSync(
+		join(consumer, "src", "portrait.ts"),
+		`import "./portrait.css";
+
+export function portraitClass(active: boolean): string {
+\treturn active ? "portrait active" : "portrait";
+}
+`,
+	);
+	writeFileSync(
+		join(consumer, "src", "legacy.js"),
+		`import "./portrait.css";
+
+export function legacyClass(active) {
+\treturn active ? "legacy active" : "legacy";
+}
+`,
+	);
+	writeFileSync(
+		join(consumer, "src", "portrait.css"),
+		".odo { color: amber; }\n",
+	);
+	const root = realpathSync(consumer);
+	const portraitCoverage = {
+		f: { 0: 1 },
+		fnMap: {
+			0: {
+				loc: { end: { column: 1, line: 5 }, start: { column: 52, line: 3 } },
+			},
+		},
+		s: { 0: 1 },
+		statementMap: {
+			0: { end: { column: 48, line: 4 }, start: { column: 1, line: 4 } },
+		},
+	};
+	writeFileSync(
+		join(consumer, "side-effect-coverage.json"),
+		JSON.stringify({
+			[join(root, "src", "portrait.ts")]: portraitCoverage,
+			[join(root, "src", "legacy.js")]: {
+				f: { 0: 0 },
+				fnMap: {
+					0: {
+						loc: {
+							end: { column: 1, line: 5 },
+							start: { column: 36, line: 3 },
+						},
+					},
+				},
+				s: { 0: 0 },
+				statementMap: {
+					0: { end: { column: 44, line: 4 }, start: { column: 1, line: 4 } },
+				},
+			},
+			[join(root, "src", "portrait.css")]: {
+				f: {},
+				fnMap: {},
+				s: {},
+				statementMap: {},
+			},
+		}),
 	);
 	writeFileSync(
 		join(consumer, "index.ts"),
