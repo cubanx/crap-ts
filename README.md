@@ -91,9 +91,12 @@ Scores are compared unrounded: with `max` 30, a score of exactly 30 passes and
 `crap-ts score` walks the working directory for `.ts`, `.tsx`, `.mts` and
 `.cts` files, skipping `node_modules`, directories whose name starts with `.`,
 symbolic links and `.d.ts` declarations. An `include` pattern that names a
-dot directory as a full path segment makes the walk enter every directory
-with that name. For example, `.railway/**` or `.railway/` lets the walk find
-`.railway/deploy.ts`, so an uncovered file there fails as missing evidence.
+dot directory as a full path segment makes the walk enter that directory, so
+an uncovered file there fails as missing evidence. A `/**` pattern names it
+only at that path: `apps/web/.storybook/**` enters `apps/web/.storybook` but
+not `packages/ui/.storybook`. A plain pattern keeps substring semantics:
+`.railway/` enters every `.railway` directory, and `web/.storybook/` enters
+every `.storybook` directory below a directory whose name ends with `web`.
 Other dot directories stay skipped, also below an included directory.
 `node_modules` is always skipped. `include` and `exclude` match paths
 relative to the working directory. A pattern ending in `/**` matches files
