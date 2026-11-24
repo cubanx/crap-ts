@@ -292,7 +292,7 @@ word, because you'd be mad at me if it didn't, and I'd also be mad at me.
 ## JSON Report
 
 `crap-ts score --json` prints one JSON document to stdout. Schema version `1`
-is stable for crap-ts 1.x: fields are only added, never renamed, removed or
+is stable for crap-ts 1.x and 2.x: fields are only added, never renamed, removed or
 changed in meaning. A breaking change bumps `schemaVersion`.
 
 ```json
@@ -358,7 +358,7 @@ changed in meaning. A breaking change bumps `schemaVersion`.
 ## Programmatic API
 
 The package root is the only entry point. These exports, and the types in
-`src/index.d.ts`, are the 1.x API:
+`src/index.d.ts`, are the 2.x API:
 
 - `runCrapAudit(options?: CrapAuditOptions): Promise<number>` runs the same
   audit as the CLI and resolves to its exit code (`2` for invalid options,
@@ -381,6 +381,25 @@ The package root is the only entry point. These exports, and the types in
   `coverage` as a percentage from 0 to 100.
 
 Everything else under `src/` is internal and may change in any release.
+
+## Upgrading From 1.x
+
+2.0 has two breaking changes. Scores and the JSON schema do not change.
+
+- A listed coverage file that contains `{}` now fails with exit code 1, also
+  with `--report-only`. Fix the coverage run so that it writes entries. To
+  accept empty files as in 1.0, pass `--allow-empty-coverage` or set
+  `allowEmptyCoverage: true`.
+- An `include` or `exclude` pattern with `*` anywhere other than a trailing
+  `/**` now exits with code 2. Replace `src/*` or `src/**/*.ts` with `src/**`,
+  or use a plain substring pattern such as `src/`.
+
+New options:
+
+- `--fail-on-ignored` (`failOnIgnored`) fails the gate on functions that
+  coverage ignore comments exempt.
+- A pattern ending in `/**` matches only below that directory at the working
+  directory root. Plain patterns still match substrings.
 
 ## Upgrading From 0.x
 
