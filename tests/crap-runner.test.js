@@ -181,6 +181,90 @@ test("merges several coverage files by source position, not counter id", async (
 	);
 });
 
+test("anchors directory patterns for source inventory and coverage entries", async () => {
+	const coverage = branchCoverage([1, 1, 1]);
+
+	await withProject(
+		{
+			"src/outside.ts": firstSource,
+			"audit/src/first.ts": firstSource,
+			"audit/src/fixtures/local.ts": firstSource,
+			"audit/tests/fixtures/src/fixtures/nested.ts": firstSource,
+			"audit/tests/fixtures/src/uncovered.ts": firstSource,
+			"audit/coverage.json": {
+				"../src/outside.ts": coverage,
+				"src/first.ts": coverage,
+				"tests/fixtures/src/fixtures/nested.ts": coverage,
+			},
+		},
+		async (cwd) => {
+			const options = {
+				coveragePaths: ["coverage.json"],
+				cwd: join(cwd, "audit"),
+				json: true,
+				minLines: 1,
+			};
+			const anchored = await captureConsole(() =>
+				runCrapAudit({
+					...options,
+					includes: ["src/**"],
+					excludes: ["src\\fixtures\\**"],
+				}),
+			);
+			assert.equal(anchored.result, 0);
+			assert.deepEqual(
+				JSON.parse(anchored.logs.join("\n")).functions.map(({ file }) => file),
+				["src/first.ts"],
+			);
+
+			const substring = await captureConsole(() =>
+				runCrapAudit({
+					...options,
+					includes: ["./src/"],
+					excludes: ["src/fixtures/**"],
+				}),
+			);
+			assert.equal(substring.result, 1);
+			const report = JSON.parse(substring.logs.join("\n"));
+			assert.deepEqual(report.functions.map(({ file }) => file).sort(), [
+				"../src/outside.ts",
+				"src/first.ts",
+				"tests/fixtures/src/fixtures/nested.ts",
+				"tests/fixtures/src/uncovered.ts",
+			]);
+			assert.deepEqual(report.missingFiles, [
+				"tests/fixtures/src/uncovered.ts",
+			]);
+		},
+	);
+});
+
+test("rejects unsupported wildcards before scoring", async () => {
+	await withProject(
+		{ "coverage.json": {}, "src/odo.ts": firstSource },
+		async (cwd) => {
+			for (const [filter, pattern] of [
+				["includes", "src/**/*.ts"],
+				["includes", "src/*.ts"],
+				["includes", "src/*/**"],
+				["excludes", "src/*.ts"],
+			]) {
+				const messages = await captureConsole(() =>
+					runCrapAudit({
+						coveragePaths: ["coverage.json"],
+						cwd,
+						[filter]: [pattern],
+					}),
+				);
+				assert.equal(messages.result, 2, pattern);
+				assert.deepEqual(messages.logs, []);
+				assert.match(messages.errors.join("\n"), /Unsupported path pattern/);
+				assert.ok(messages.errors.join("\n").includes(pattern));
+			}
+		},
+	);
+});
+
 test("matches real-path coverage keys from a symlinked working directory", async () => {
 	await withProject({ "first.ts": firstSource }, async (realCwd) => {
 		const linkedCwd = `${realCwd}-linked`;
@@ -305,6 +389,7 @@ test("lists functions in files without coverage as missing evidence", async () =
 		async (cwd) => {
 			const messages = await captureConsole(() =>
 				runCrapAudit({
+					allowEmptyCoverage: true,
 					coveragePaths: ["coverage-final.json"],
 					cwd,
 					minLines: 1,
@@ -560,6 +645,79 @@ test("lists ignored functions last without failing the gate", async () => {
 	);
 });
 
+test("fails ignored functions with any supported ignore directive when required", async () => {
+	const emptyEntry = { f: {}, fnMap: {}, s: {}, statementMap: {} };
+	await withProject(
+		{
+			"coverage.json": {
+				"file.ts": emptyEntry,
+				"next.ts": emptyEntry,
+				"region.ts": emptyEntry,
+				"branches.ts": emptyEntry,
+				"measured.ts": branchCoverage([1, 1, 1]),
+			},
+			"file.ts": "/* istanbul ignore file */\nfunction quark() { return 1; }",
+			"next.ts": "/* c8 ignore next */\nfunction rom() { return 1; }",
+			"region.ts":
+				"/* v8 ignore start */\nfunction nog() { return 1; }\n/* v8 ignore stop */",
+			"branches.ts": [
+				"/* istanbul ignore if */",
+				"if (condition) { register(function odo() { return 1; }); }",
+				"/* istanbul ignore else */",
+				"if (condition) { void 0; } else { register(function kira() { return 1; }); }",
+			].join("\n"),
+			"measured.ts": firstSource.replace(/^\n/, "/* v8 ignore next */\n"),
+		},
+		async (cwd) => {
+			const options = { coveragePaths: ["coverage.json"], cwd, minLines: 1 };
+			for (const failOnIgnored of [false, true]) {
+				const messages = await captureConsole(() =>
+					runCrapAudit({ ...options, failOnIgnored, json: true }),
+				);
+				const report = JSON.parse(messages.logs.join("\n"));
+				const ignored = report.functions.filter(
+					(row) => row.evidence === "ignored",
+				);
+
+				assert.equal(messages.result, failOnIgnored ? 1 : 0);
+				assert.equal(report.summary.passed, !failOnIgnored);
+				assert.equal(report.summary.aboveMax, 0);
+				assert.equal(report.summary.ignored, 5);
+				assert.deepEqual(ignored.map(({ name }) => name).sort(), [
+					"kira",
+					"nog",
+					"odo",
+					"quark",
+					"rom",
+				]);
+				assert.ok(
+					ignored.every(
+						({ level }) => level === (failOnIgnored ? "fail" : "ignored"),
+					),
+				);
+				assert.equal(
+					report.functions.find(({ name }) => name === "first").level,
+					"ok",
+				);
+			}
+
+			const text = await captureConsole(() =>
+				runCrapAudit({
+					...options,
+					failOnIgnored: true,
+					limit: 0,
+					reportOnly: true,
+				}),
+			);
+			assert.equal(text.result, 0);
+			assert.match(
+				text.logs.join("\n"),
+				/FAIL file\.ts:2 \| quark .*coverage ignored/,
+			);
+		},
+	);
+});
+
 test("fails functions without counters that no ignore comment covers", async () => {
 	await withProject(
 		{
@@ -599,19 +757,27 @@ test("exempts files with a file-level ignore comment from missing evidence", asy
 			"coverage-final.json": {},
 			"holosuite.ts":
 				"/* istanbul ignore file */\nexport const program = vicFontaine();\n",
+			"types.ts": "/* v8 ignore file */\nexport type Station = string;\n",
 		},
 		async (cwd) => {
-			const messages = await captureConsole(() =>
-				runCrapAudit({
-					coveragePaths: ["coverage-final.json"],
-					cwd,
-					json: true,
-					skipCoverage: true,
-				}),
-			);
+			for (const failOnIgnored of [false, true]) {
+				const messages = await captureConsole(() =>
+					runCrapAudit({
+						allowEmptyCoverage: true,
+						coveragePaths: ["coverage-final.json"],
+						cwd,
+						failOnIgnored,
+						json: true,
+						skipCoverage: true,
+					}),
+				);
 
-			assert.equal(messages.result, 0);
-			assert.deepEqual(JSON.parse(messages.logs.join("\n")).missingFiles, []);
+				assert.equal(messages.result, failOnIgnored ? 1 : 0);
+				assert.deepEqual(
+					JSON.parse(messages.logs.join("\n")).missingFiles,
+					failOnIgnored ? ["holosuite.ts"] : [],
+				);
+			}
 		},
 	);
 });

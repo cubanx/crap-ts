@@ -1,12 +1,16 @@
 export interface CrapAuditOptions {
 	all?: boolean;
+	/** Accept listed coverage JSON files with no source entries. Defaults to false. */
+	allowEmptyCoverage?: boolean;
 	coverageCommand?: string;
 	/** Istanbul `coverage-final.json` files, merged by source position. Defaults to `["coverage/unit/coverage-final.json"]`. */
 	coveragePaths?: string[];
 	cwd?: string;
-	/** Skip source files whose path contains any of these substrings. */
+	/** Skip files matching these path substrings or root-anchored `dir/**` patterns. */
 	excludes?: string[];
-	/** Only analyze source files whose path contains one of these substrings. */
+	/** Fail on functions with ignored evidence and require coverage entries for executable files with an ignore-file comment. Defaults to false. */
+	failOnIgnored?: boolean;
+	/** Analyze files matching these path substrings or root-anchored `dir/**` patterns. */
 	includes?: string[];
 	/** Print the JSON report (schema version 1) to stdout instead of the text report. */
 	json?: boolean;
@@ -21,6 +25,6 @@ export interface CrapAuditOptions {
 
 /**
  * Resolves to the process exit code: 0 pass, 1 gate failure, failed coverage command or missing coverage file, 2 usage error (including non-finite numeric options).
- * Rejects when coverage or source input is malformed or stale.
+ * Rejects when coverage or source input is malformed or stale, or when a coverage file is empty and `allowEmptyCoverage` is false.
  */
 export function runCrapAudit(options?: CrapAuditOptions): Promise<number>;

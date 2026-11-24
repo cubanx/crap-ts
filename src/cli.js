@@ -21,8 +21,12 @@ Options:
   --coverage-command <cmd>
                     Command to generate coverage before scoring.
   --all            Print every analyzed function instead of applying --limit.
-  --include <text> Only analyze source files whose path contains this text.
-  --exclude <text> Skip source files whose path contains this text.
+  --include <pattern> Only analyze matching source paths. Use dir/** to anchor.
+  --exclude <pattern> Skip matching source paths. Use dir/** to anchor.
+  --fail-on-ignored
+                    Fail when an audited function has coverage evidence marked ignored.
+  --allow-empty-coverage
+                    Accept listed coverage JSON files with no entries.
   --json           Print the full JSON report (schema version 1) instead of text.
   --limit <n>      Number of rows to print in the text report. Defaults to 20.
   --min-lines <n>  Ignore functions shorter than this. Defaults to 10.
@@ -41,10 +45,12 @@ export function parseCliArgs(argv, { cwd = process.cwd() } = {}) {
 		args,
 		options: {
 			all: { type: "boolean" },
+			"allow-empty-coverage": { type: "boolean" },
 			config: { type: "string" },
 			"coverage-file": { type: "string", multiple: true },
 			"coverage-command": { type: "string" },
 			exclude: { type: "string", multiple: true },
+			"fail-on-ignored": { type: "boolean" },
 			help: { type: "boolean", short: "h" },
 			include: { type: "string", multiple: true },
 			json: { type: "boolean" },
@@ -62,10 +68,12 @@ export function parseCliArgs(argv, { cwd = process.cwd() } = {}) {
 		mergeConfigWithCli(config, {
 			command,
 			all: values.all,
+			allowEmptyCoverage: values["allow-empty-coverage"],
 			configPath: values.config,
 			coverageCommand: values["coverage-command"],
 			coveragePaths: values["coverage-file"],
 			excludes: values.exclude,
+			failOnIgnored: values["fail-on-ignored"],
 			help: values.help,
 			includes: values.include,
 			json: values.json,
@@ -158,9 +166,11 @@ function mergeConfigWithCli(config, cliOptions) {
 
 const configKeys = new Set([
 	"all",
+	"allowEmptyCoverage",
 	"coverageCommand",
 	"coverageFile",
 	"exclude",
+	"failOnIgnored",
 	"include",
 	"json",
 	"limit",
@@ -186,6 +196,11 @@ function normalizeConfig(config) {
 
 	return stripUndefined({
 		all: parseConfigType(config.all, "all", "boolean"),
+		allowEmptyCoverage: parseConfigType(
+			config.allowEmptyCoverage,
+			"allowEmptyCoverage",
+			"boolean",
+		),
 		coverageCommand: parseConfigType(
 			config.coverageCommand,
 			"coverageCommand",
@@ -193,6 +208,11 @@ function normalizeConfig(config) {
 		),
 		coveragePaths: normalizeConfigList(config.coverageFile, "coverageFile"),
 		excludes: normalizeConfigList(config.exclude, "exclude"),
+		failOnIgnored: parseConfigType(
+			config.failOnIgnored,
+			"failOnIgnored",
+			"boolean",
+		),
 		includes: normalizeConfigList(config.include, "include"),
 		json: parseConfigType(config.json, "json", "boolean"),
 		limit: parseConfigNumber(config.limit, "limit"),
