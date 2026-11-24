@@ -90,7 +90,15 @@ Scores are compared unrounded: with `max` 30, a score of exactly 30 passes and
 
 `crap-ts score` walks the working directory for `.ts`, `.tsx`, `.mts` and
 `.cts` files, skipping `node_modules`, directories whose name starts with `.`,
-symbolic links and `.d.ts` declarations. `include` and `exclude` match paths
+symbolic links and `.d.ts` declarations. An `include` pattern that names a
+dot directory as a full path segment makes the walk enter that directory, so
+an uncovered file there fails as missing evidence. A `/**` pattern names it
+only at that path: `apps/web/.storybook/**` enters `apps/web/.storybook` but
+not `packages/ui/.storybook`. A plain pattern keeps substring semantics:
+`.railway/` enters every `.railway` directory, and `web/.storybook/` enters
+every `.storybook` directory below a directory whose name ends with `web`.
+Other dot directories stay skipped, also below an included directory.
+`node_modules` is always skipped. `include` and `exclude` match paths
 relative to the working directory. A pattern ending in `/**` matches files
 below a directory at that root. For example, `src/**` matches `src/a.ts`
 and `src/lib/b.ts`. Plain patterns match substrings. For example, `src/`
@@ -400,6 +408,13 @@ The package root is the only entry point. These exports, and the types in
   `coverage` as a percentage from 0 to 100.
 
 Everything else under `src/` is internal and may change in any release.
+
+## Upgrading From 2.1
+
+Scores and the JSON schema do not change. If an `include` pattern names a dot
+directory, such as `.railway/**`, the walk now enters it. A file there with no
+coverage entry now fails the gate as missing evidence. 2.1 skipped such
+files without a message.
 
 ## Upgrading From 2.0
 

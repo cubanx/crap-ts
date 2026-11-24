@@ -114,7 +114,11 @@ export async function runCrapAudit({
 	};
 	const isTestFile = (path) =>
 		testFilePattern.test(normalizePath(relative(root, path)));
-	const candidatePaths = new Set(listSourceFiles(root).filter(matchesFilters));
+	const candidatePaths = new Set(
+		listSourceFiles(root, root, dotDirectoryFilter(includes)).filter(
+			matchesFilters,
+		),
+	);
 
 	// Coverage tools also list non-source modules (CSS, JSON) and even
 	// directories; only TypeScript and JavaScript sources can be scored.
@@ -493,14 +497,53 @@ function comparePositions(left, right, nullColumn) {
 	);
 }
 
-function listSourceFiles(directory) {
+// The inventory walk skips dot directories unless an include names one at
+// that position. An anchored pattern such as `apps/web/.storybook/**` names
+// each dot directory on its path from the root. A plain pattern such as
+// `web/.storybook/` keeps substring semantics: it names any dot directory
+// whose relative path ends with the pattern up to that directory. Dot
+// directories inside a named one stay skipped; the include and exclude
+// filters still decide which files count.
+function dotDirectoryFilter(includes) {
+	const tests = includes.flatMap((pattern) => {
+		const normalizedPattern = normalizePath(pattern);
+		const anchored = normalizedPattern.endsWith("/**");
+		const segments = (
+			anchored ? normalizedPattern.slice(0, -3) : normalizedPattern
+		).split("/");
+
+		return segments.flatMap((segment, index) => {
+			if (!segment.startsWith(".") || segment === "." || segment === "..") {
+				return [];
+			}
+
+			const head = segments.slice(0, index + 1).join("/");
+			if (anchored) {
+				return [(relativePath) => relativePath === head];
+			}
+			// The first segment of a plain pattern may match the end of a longer
+			// name, as in matchesAny; a dot segment must match a whole name.
+			return [
+				index === 0
+					? (relativePath) => `/${relativePath}`.endsWith(`/${head}`)
+					: (relativePath) => relativePath.endsWith(head),
+			];
+		});
+	});
+
+	return (relativePath) => tests.some((test) => test(relativePath));
+}
+
+function listSourceFiles(root, directory, entersDotDirectory) {
 	return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
 		const path = join(directory, entry.name);
 
 		if (entry.isDirectory()) {
-			return entry.name === "node_modules" || entry.name.startsWith(".")
-				? []
-				: listSourceFiles(path);
+			const skipped =
+				entry.name === "node_modules" ||
+				(entry.name.startsWith(".") &&
+					!entersDotDirectory(normalizePath(relative(root, path))));
+			return skipped ? [] : listSourceFiles(root, path, entersDotDirectory);
 		}
 
 		return entry.isFile() && isSourceFile(entry.name) ? [path] : [];

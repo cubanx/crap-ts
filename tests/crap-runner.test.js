@@ -704,6 +704,110 @@ test("fails source files without coverage evidence and exempts declaration-only 
 	);
 });
 
+test("walks into a dot directory that an include names", async () => {
+	for (const include of [".railway/**", ".railway/"]) {
+		await withProject(
+			{
+				"coverage-final.json": {
+					"src/first.ts": branchCoverage([1, 1, 1]),
+				},
+				".railway/deploy.ts": "export const station = dock();",
+				".railway/.cache/stale.ts": "export const odo = shift();",
+				"src/first.ts": firstSource,
+			},
+			async (cwd) => {
+				const messages = await captureConsole(() =>
+					runCrapAudit({
+						coveragePaths: ["coverage-final.json"],
+						cwd,
+						includes: ["src/**", include],
+						json: true,
+						minLines: 1,
+						skipCoverage: true,
+					}),
+				);
+				const report = JSON.parse(messages.logs.join("\n"));
+
+				assert.equal(messages.result, 1, include);
+				assert.deepEqual(report.missingFiles, [".railway/deploy.ts"], include);
+			},
+		);
+	}
+});
+
+test("walks into a named dot directory only where the include names it", async () => {
+	await withProject(
+		{
+			"coverage-final.json": {
+				"packages/ui/src/first.ts": branchCoverage([1, 1, 1]),
+			},
+			"apps/web/.storybook/preview.ts": "export const station = dock();",
+			"apps/.storybook/preview.ts": "export const station = dock();",
+			"packages/ui/.storybook/preview.ts": "export const odo = shift();",
+			"packages/ui/src/first.ts": firstSource,
+			"tools/web/.storybook/main.ts": "export const quark = bar();",
+			"web/.storybook/main.ts": "export const rom = fix();",
+		},
+		async (cwd) => {
+			const audit = async (includes) => {
+				const messages = await captureConsole(() =>
+					runCrapAudit({
+						coveragePaths: ["coverage-final.json"],
+						cwd,
+						includes,
+						json: true,
+						minLines: 1,
+						skipCoverage: true,
+					}),
+				);
+				return JSON.parse(messages.logs.join("\n")).missingFiles;
+			};
+
+			assert.deepEqual(await audit(["packages/**", "apps/web/.storybook/**"]), [
+				"apps/web/.storybook/preview.ts",
+			]);
+			// A plain pattern keeps substring semantics: any directory whose
+			// path ends with the named part is entered.
+			assert.deepEqual(await audit(["packages/ui/src/", "web/.storybook/"]), [
+				"apps/web/.storybook/preview.ts",
+				"tools/web/.storybook/main.ts",
+				"web/.storybook/main.ts",
+			]);
+		},
+	);
+});
+
+test("keeps dot directories skipped unless an include names them", async () => {
+	await withProject(
+		{
+			"coverage-final.json": {
+				"src/first.ts": branchCoverage([1, 1, 1]),
+			},
+			".railway/deploy.ts": "export const station = dock();",
+			"src/.cache/stale.ts": "export const odo = shift();",
+			"src/first.ts": firstSource,
+		},
+		async (cwd) => {
+			for (const includes of [[], ["src/**"], ["src/"]]) {
+				const messages = await captureConsole(() =>
+					runCrapAudit({
+						coveragePaths: ["coverage-final.json"],
+						cwd,
+						includes,
+						json: true,
+						minLines: 1,
+						skipCoverage: true,
+					}),
+				);
+				const report = JSON.parse(messages.logs.join("\n"));
+
+				assert.equal(messages.result, 0, messages.errors.join("\n"));
+				assert.deepEqual(report.missingFiles, [], JSON.stringify(includes));
+			}
+		},
+	);
+});
+
 test("lists functions in files without coverage as missing evidence", async () => {
 	await withProject(
 		{
