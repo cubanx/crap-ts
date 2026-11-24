@@ -9,6 +9,10 @@ const reportSchemaVersion = 1;
 
 const sourceFilePattern = /\.[cm]?tsx?$/;
 const declarationFilePattern = /\.d\.[cm]?ts$/;
+// The test files Vitest and Jest find by default: `*.test.*`, `*.spec.*`
+// (and Vitest's `*.test-d.*` type tests), and anything under `__tests__/`.
+const testFilePattern =
+	/(?:^|\/)__tests__\/|\.(?:test|spec)(?:-d)?\.[cm]?[jt]sx?$/;
 
 export async function runCrapAudit({
 	all = false,
@@ -19,6 +23,7 @@ export async function runCrapAudit({
 	excludes = [],
 	failOnIgnored = false,
 	includes = [],
+	includeTests = false,
 	json = false,
 	limit = 20,
 	maxScore = 30,
@@ -100,6 +105,7 @@ export async function runCrapAudit({
 	const isSelected = (path) => {
 		const relativePath = relative(root, path);
 		return (
+			(includeTests || !testFilePattern.test(normalizePath(relativePath))) &&
 			matchesAny(relativePath, includes, true) &&
 			!matchesAny(relativePath, excludes, false)
 		);

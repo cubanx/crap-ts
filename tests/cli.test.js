@@ -29,6 +29,7 @@ test("parses direct audit flags", () => {
 		"--all",
 		"--fail-on-ignored",
 		"--allow-empty-coverage",
+		"--include-tests",
 		"--report-only",
 		"--max",
 		"40",
@@ -52,6 +53,7 @@ test("parses direct audit flags", () => {
 	assert.equal(options.all, true);
 	assert.equal(options.failOnIgnored, true);
 	assert.equal(options.allowEmptyCoverage, true);
+	assert.equal(options.includeTests, true);
 	assert.equal(options.reportOnly, true);
 	assert.equal(options.maxScore, 40);
 	assert.equal(options.warnScore, 35);
@@ -80,6 +82,7 @@ test("loads default .crap-ts.json config", () => {
 			minLines: 3,
 			reportOnly: true,
 			allowEmptyCoverage: true,
+			includeTests: true,
 			skipCoverage: true,
 			warn: 35,
 		}),
@@ -103,8 +106,13 @@ test("loads default .crap-ts.json config", () => {
 	assert.equal(options.minLines, 3);
 	assert.equal(options.reportOnly, true);
 	assert.equal(options.allowEmptyCoverage, true);
+	assert.equal(options.includeTests, true);
 	assert.equal(options.skipCoverage, true);
 	assert.equal(options.warnScore, 35);
+});
+
+test("leaves test files out by default", () => {
+	assert.equal(parseCliArgs(["score"]).includeTests, false);
 });
 
 test("loads explicit config path", () => {
@@ -310,6 +318,7 @@ test("rejects non-boolean and non-string config values", async () => {
 			[{ failOnIgnored: "true" }, /failOnIgnored must be a boolean/],
 			[{ reportOnly: "false" }, /reportOnly must be a boolean/],
 			[{ allowEmptyCoverage: 1 }, /allowEmptyCoverage must be a boolean/],
+			[{ includeTests: "yes" }, /includeTests must be a boolean/],
 			[{ skipCoverage: 1 }, /skipCoverage must be a boolean/],
 			[
 				{ coverageCommand: ["npm", "test"] },

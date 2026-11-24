@@ -12,6 +12,8 @@ export interface CrapAuditOptions {
 	failOnIgnored?: boolean;
 	/** Analyze files matching these path substrings or root-anchored `dir/**` patterns. */
 	includes?: string[];
+	/** Also analyze test files (`*.test.*`, `*.spec.*`, `*.test-d.*`, `__tests__/`). Defaults to false. */
+	includeTests?: boolean;
 	/** Print the JSON report (schema version 1) to stdout instead of the text report. */
 	json?: boolean;
 	limit?: number;

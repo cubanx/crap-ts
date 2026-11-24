@@ -456,6 +456,94 @@ test("fails the gate when no functions are checked", async () => {
 	);
 });
 
+test("skips common test files by default and scores them with includeTests", async () => {
+	const coverage = branchCoverage([1, 1, 1]);
+	const testFiles = [
+		"src/first.test.ts",
+		"src/first.spec.tsx",
+		"src/first.test.mts",
+		"src/first.spec.cts",
+		"src/first.test-d.ts",
+		"src/__tests__/helpers.ts",
+		"__tests__/root.ts",
+	];
+
+	await withProject(
+		{
+			"coverage-final.json": {
+				"src/first.ts": coverage,
+				"src/__tests__/helpers.ts": coverage,
+			},
+			"src/first.ts": firstSource,
+			// Not test files: the marker must sit right before the extension.
+			"src/first.test.helpers.ts": firstSource,
+			"src/contest.ts": firstSource,
+			"tests/fixture.ts": firstSource,
+			...Object.fromEntries(testFiles.map((path) => [path, firstSource])),
+		},
+		async (cwd) => {
+			const options = {
+				coveragePaths: ["coverage-final.json"],
+				cwd,
+				json: true,
+				minLines: 1,
+				skipCoverage: true,
+			};
+			const byDefault = await captureConsole(() =>
+				runCrapAudit({ ...options, includes: ["src/", "tests/"] }),
+			);
+			const report = JSON.parse(byDefault.logs.join("\n"));
+
+			assert.deepEqual(report.missingFiles, [
+				"src/contest.ts",
+				"src/first.test.helpers.ts",
+				"tests/fixture.ts",
+			]);
+			assert.deepEqual(
+				[...new Set(report.functions.map(({ file }) => file))].sort(),
+				[
+					"src/contest.ts",
+					"src/first.test.helpers.ts",
+					"src/first.ts",
+					"tests/fixture.ts",
+				],
+			);
+
+			const optedIn = await captureConsole(() =>
+				runCrapAudit({ ...options, includeTests: true }),
+			);
+			const optedInReport = JSON.parse(optedIn.logs.join("\n"));
+
+			assert.equal(optedIn.result, 1);
+			for (const path of testFiles.filter(
+				(path) => path !== "src/__tests__/helpers.ts",
+			)) {
+				assert.ok(optedInReport.missingFiles.includes(path), path);
+			}
+			assert.ok(
+				optedInReport.functions.some(
+					(row) =>
+						row.file === "src/__tests__/helpers.ts" &&
+						row.evidence === "statements",
+				),
+			);
+
+			// User filters still apply on top of the default.
+			const excluded = await captureConsole(() =>
+				runCrapAudit({
+					...options,
+					excludes: [".helpers.", "contest", "tests/**"],
+				}),
+			);
+			assert.equal(excluded.result, 0, excluded.errors.join("\n"));
+			assert.deepEqual(
+				JSON.parse(excluded.logs.join("\n")).functions.map(({ file }) => file),
+				["src/first.ts"],
+			);
+		},
+	);
+});
+
 test("fails source files without coverage evidence and exempts declaration-only files", async () => {
 	await withProject(
 		{

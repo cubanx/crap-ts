@@ -27,6 +27,8 @@ Options:
                     Fail when an audited function has coverage evidence marked ignored.
   --allow-empty-coverage
                     Accept listed coverage JSON files with no entries.
+  --include-tests  Also analyze test files (*.test.*, *.spec.*, __tests__/),
+                    which are skipped by default.
   --json           Print the full JSON report (schema version 1) instead of text.
   --limit <n>      Number of rows to print in the text report. Defaults to 20.
   --min-lines <n>  Ignore functions shorter than this. Defaults to 10.
@@ -53,6 +55,7 @@ export function parseCliArgs(argv, { cwd = process.cwd() } = {}) {
 			"fail-on-ignored": { type: "boolean" },
 			help: { type: "boolean", short: "h" },
 			include: { type: "string", multiple: true },
+			"include-tests": { type: "boolean" },
 			json: { type: "boolean" },
 			limit: { type: "string" },
 			max: { type: "string" },
@@ -76,6 +79,7 @@ export function parseCliArgs(argv, { cwd = process.cwd() } = {}) {
 			failOnIgnored: values["fail-on-ignored"],
 			help: values.help,
 			includes: values.include,
+			includeTests: values["include-tests"],
 			json: values.json,
 			limit: parseOptionalNumber(values.limit, "--limit"),
 			maxScore: parseOptionalNumber(values.max, "--max"),
@@ -177,6 +181,7 @@ const configKeys = new Set([
 	"exclude",
 	"failOnIgnored",
 	"include",
+	"includeTests",
 	"json",
 	"limit",
 	"max",
@@ -219,6 +224,11 @@ function normalizeConfig(config) {
 			"boolean",
 		),
 		includes: normalizeConfigList(config.include, "include"),
+		includeTests: parseConfigType(
+			config.includeTests,
+			"includeTests",
+			"boolean",
+		),
 		json: parseConfigType(config.json, "json", "boolean"),
 		limit: parseConfigNumber(config.limit, "limit"),
 		maxScore: parseConfigNumber(config.max, "max"),
@@ -280,6 +290,7 @@ function applyDefaults(options) {
 		help: options.help ?? false,
 		excludes: options.excludes ?? [],
 		includes: options.includes ?? [],
+		includeTests: options.includeTests ?? false,
 		json: options.json ?? false,
 		reportOnly: options.reportOnly ?? false,
 		skipCoverage: options.skipCoverage ?? false,

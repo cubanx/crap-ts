@@ -36,7 +36,7 @@ TypeScript 7 projects do not get a nested TypeScript 5.x install.
 ## Usage
 
 ```sh
-npx crap-ts score --coverage-command "npm run test:coverage -- --coverage.reporter=json" --coverage-file coverage/unit/coverage-final.json --include src/ --exclude .test.ts
+npx crap-ts score --coverage-command "npm run test:coverage -- --coverage.reporter=json" --coverage-file coverage/unit/coverage-final.json --include 'src/**'
 ```
 
 Add package scripts:
@@ -58,8 +58,7 @@ Put the long bits in `.crap-ts.json`:
 {
   "coverageCommand": "npm run test:coverage -- --coverage.reporter=json",
   "coverageFile": "coverage/unit/coverage-final.json",
-  "include": ["src/"],
-  "exclude": [".test.ts"],
+  "include": ["src/**"],
   "max": 30,
   "warn": 25
 }
@@ -115,8 +114,15 @@ import (`import "./setup"`) counts as executable. The functions in such a file
 are still listed, with `evidence: "missing"` unless an ignore comment covers
 them.
 
-Use `exclude` for tests, fixtures and tooling that your coverage run does not
-instrument.
+Test files are skipped by default: file names that end in `.test.<ext>`,
+`.spec.<ext>`, `.test-d.<ext>` or `.spec-d.<ext>`, and any file below a
+`__tests__/` directory. These are the files Vitest and Jest treat as tests by
+default, so their coverage runs do not instrument them. `include` and
+`exclude` apply on top of this default. Pass `--include-tests` (or set
+`includeTests: true`) to analyze test files too.
+
+Use `exclude` for other files that your coverage run does not instrument,
+such as fixtures, test helpers and tooling.
 
 ### Coverage
 
@@ -250,6 +256,8 @@ error.
 - `--fail-on-ignored`: fail on ignored functions and require coverage entries
   for executable files with an `ignore file` comment.
 - `--allow-empty-coverage`: accept listed coverage files containing `{}`.
+- `--include-tests`: also analyze test files, which are skipped by default.
+  See [Source inventory](#source-inventory).
 - `--json`: print the JSON report instead of the text report.
 - `--all`: print every analyzed function instead of applying `--limit`.
 - `--limit <n>`: number of text report rows to print. Defaults to `20`.
@@ -286,6 +294,7 @@ word, because you'd be mad at me if it didn't, and I'd also be mad at me.
 | `exclude` | string or string[] | `--exclude` | nothing |
 | `failOnIgnored` | boolean | `--fail-on-ignored` | `false` |
 | `allowEmptyCoverage` | boolean | `--allow-empty-coverage` | `false` |
+| `includeTests` | boolean | `--include-tests` | `false` |
 | `json` | boolean | `--json` | `false` |
 | `all` | boolean | `--all` | `false` |
 | `limit` | number | `--limit` | `20` |
@@ -373,7 +382,7 @@ The package root is the only entry point. These exports, and the types in
   when coverage or source input is malformed or stale, or when a required
   coverage file is empty and `allowEmptyCoverage` is false. Options include
   `coverageCommand`, `coveragePaths`, `cwd`, `includes`, `excludes`,
-  `failOnIgnored`, `allowEmptyCoverage`,
+  `failOnIgnored`, `allowEmptyCoverage`, `includeTests`,
   `json`, `all`, `limit`, `maxScore`, `warnScore`, `minLines`, `reportOnly`
   and `skipCoverage`.
 - `analyzeFileRisk({ filePath, sourceText, coverage?, minLines?, sourceFilePath? }): Promise<FunctionRisk[]>`
@@ -387,6 +396,25 @@ The package root is the only entry point. These exports, and the types in
   `coverage` as a percentage from 0 to 100.
 
 Everything else under `src/` is internal and may change in any release.
+
+## Upgrading From 2.0
+
+Scores and the JSON schema do not change. The gate can fail where 2.0 passed
+or crashed:
+
+- Test files (`*.test.*`, `*.spec.*`, `*.test-d.*`, `*.spec-d.*` and files
+  below `__tests__/`) are skipped by default. You can remove `exclude` entries
+  such as `.test.ts`. To keep scoring test files, pass `--include-tests` or
+  set `includeTests: true`.
+- If `include` and `exclude` select no source files, `crap-ts` exits `1`,
+  also with `--report-only`.
+- If no function is checked, the gate fails. With `--report-only`, `crap-ts`
+  warns and exits `0`.
+- Coverage entries for files that are not TypeScript sources, such as CSS and
+  JSON modules from side-effect imports, are no longer scored. With
+  TypeScript 7, these entries crashed 2.0.
+- A positional argument such as `crap-ts score src` is still a usage error.
+  The message now suggests the matching `--include` pattern.
 
 ## Upgrading From 1.x
 
@@ -451,8 +479,7 @@ With `.crap-ts.json`:
 {
   "coverageCommand": "bun x vitest run --coverage --coverage.reporter=json",
   "coverageFile": "coverage/unit/coverage-final.json",
-  "include": ["app/", "scripts/"],
-  "exclude": [".test.ts"]
+  "include": ["app/**", "scripts/**"]
 }
 ```
 
