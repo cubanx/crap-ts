@@ -21,8 +21,12 @@ Options:
   --coverage-command <cmd>
                     Command to generate coverage before scoring.
   --all            Print every analyzed function instead of applying --limit.
-  --include <text> Only analyze source files whose path contains this text.
-  --exclude <text> Skip source files whose path contains this text.
+  --include <pattern> Only analyze matching source paths. Use dir/** to anchor.
+  --exclude <pattern> Skip matching source paths. Use dir/** to anchor.
+  --fail-on-ignored
+                    Fail when an audited function has coverage evidence marked ignored.
+  --require-every-coverage-file
+                    Reject listed coverage JSON files with no entries.
   --json           Print the full JSON report (schema version 1) instead of text.
   --limit <n>      Number of rows to print in the text report. Defaults to 20.
   --min-lines <n>  Ignore functions shorter than this. Defaults to 10.
@@ -45,6 +49,7 @@ export function parseCliArgs(argv, { cwd = process.cwd() } = {}) {
 			"coverage-file": { type: "string", multiple: true },
 			"coverage-command": { type: "string" },
 			exclude: { type: "string", multiple: true },
+			"fail-on-ignored": { type: "boolean" },
 			help: { type: "boolean", short: "h" },
 			include: { type: "string", multiple: true },
 			json: { type: "boolean" },
@@ -52,6 +57,7 @@ export function parseCliArgs(argv, { cwd = process.cwd() } = {}) {
 			max: { type: "string" },
 			"min-lines": { type: "string" },
 			"report-only": { type: "boolean" },
+			"require-every-coverage-file": { type: "boolean" },
 			"skip-coverage": { type: "boolean" },
 			warn: { type: "string" },
 		},
@@ -66,6 +72,7 @@ export function parseCliArgs(argv, { cwd = process.cwd() } = {}) {
 			coverageCommand: values["coverage-command"],
 			coveragePaths: values["coverage-file"],
 			excludes: values.exclude,
+			failOnIgnored: values["fail-on-ignored"],
 			help: values.help,
 			includes: values.include,
 			json: values.json,
@@ -73,6 +80,7 @@ export function parseCliArgs(argv, { cwd = process.cwd() } = {}) {
 			maxScore: parseOptionalNumber(values.max, "--max"),
 			minLines: parseOptionalNumber(values["min-lines"], "--min-lines"),
 			reportOnly: values["report-only"],
+			requireEveryCoverageFile: values["require-every-coverage-file"],
 			skipCoverage: values["skip-coverage"],
 			warnScore: parseOptionalNumber(values.warn, "--warn"),
 		}),
@@ -161,12 +169,14 @@ const configKeys = new Set([
 	"coverageCommand",
 	"coverageFile",
 	"exclude",
+	"failOnIgnored",
 	"include",
 	"json",
 	"limit",
 	"max",
 	"minLines",
 	"reportOnly",
+	"requireEveryCoverageFile",
 	"skipCoverage",
 	"warn",
 ]);
@@ -193,12 +203,22 @@ function normalizeConfig(config) {
 		),
 		coveragePaths: normalizeConfigList(config.coverageFile, "coverageFile"),
 		excludes: normalizeConfigList(config.exclude, "exclude"),
+		failOnIgnored: parseConfigType(
+			config.failOnIgnored,
+			"failOnIgnored",
+			"boolean",
+		),
 		includes: normalizeConfigList(config.include, "include"),
 		json: parseConfigType(config.json, "json", "boolean"),
 		limit: parseConfigNumber(config.limit, "limit"),
 		maxScore: parseConfigNumber(config.max, "max"),
 		minLines: parseConfigNumber(config.minLines, "minLines"),
 		reportOnly: parseConfigType(config.reportOnly, "reportOnly", "boolean"),
+		requireEveryCoverageFile: parseConfigType(
+			config.requireEveryCoverageFile,
+			"requireEveryCoverageFile",
+			"boolean",
+		),
 		skipCoverage: parseConfigType(
 			config.skipCoverage,
 			"skipCoverage",

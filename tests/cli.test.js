@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
+import { fileURLToPath } from "node:url";
 
 import { main, parseCliArgs } from "../src/cli.js";
 
@@ -25,6 +27,8 @@ test("parses direct audit flags", () => {
 		"--include",
 		"/scripts/",
 		"--all",
+		"--fail-on-ignored",
+		"--require-every-coverage-file",
 		"--report-only",
 		"--max",
 		"40",
@@ -46,6 +50,8 @@ test("parses direct audit flags", () => {
 	assert.deepEqual(options.excludes, [".test.ts"]);
 	assert.equal(options.json, true);
 	assert.equal(options.all, true);
+	assert.equal(options.failOnIgnored, true);
+	assert.equal(options.requireEveryCoverageFile, true);
 	assert.equal(options.reportOnly, true);
 	assert.equal(options.maxScore, 40);
 	assert.equal(options.warnScore, 35);
@@ -66,12 +72,14 @@ test("loads default .crap-ts.json config", () => {
 			coverageCommand: "npm run coverage",
 			coverageFile: ["coverage/node.json", "coverage/browser.json"],
 			exclude: ".test.ts",
+			failOnIgnored: true,
 			include: ["src", "scripts"],
 			json: true,
 			limit: 7,
 			max: 42,
 			minLines: 3,
 			reportOnly: true,
+			requireEveryCoverageFile: true,
 			skipCoverage: true,
 			warn: 35,
 		}),
@@ -87,12 +95,14 @@ test("loads default .crap-ts.json config", () => {
 		"coverage/browser.json",
 	]);
 	assert.deepEqual(options.excludes, [".test.ts"]);
+	assert.equal(options.failOnIgnored, true);
 	assert.deepEqual(options.includes, ["src", "scripts"]);
 	assert.equal(options.json, true);
 	assert.equal(options.limit, 7);
 	assert.equal(options.maxScore, 42);
 	assert.equal(options.minLines, 3);
 	assert.equal(options.reportOnly, true);
+	assert.equal(options.requireEveryCoverageFile, true);
 	assert.equal(options.skipCoverage, true);
 	assert.equal(options.warnScore, 35);
 });
@@ -216,12 +226,80 @@ test("reports invalid flags as usage errors", async () => {
 	]);
 });
 
+test("rejects an empty run in a coverage merge when required", () => {
+	const cwd = mkdtempSync(join(tmpdir(), "crap-cli-empty-coverage-"));
+	const cli = fileURLToPath(new URL("../src/cli.js", import.meta.url));
+
+	try {
+		const source = "export const station = 'Deep Space Nine';";
+		writeFileSync(join(cwd, "node.json"), "{}");
+		writeFileSync(join(cwd, "ops.ts"), source);
+		writeFileSync(
+			join(cwd, "browser.json"),
+			JSON.stringify({
+				"ops.ts": {
+					f: {},
+					fnMap: {},
+					s: { 0: 1 },
+					statementMap: {
+						0: {
+							start: { line: 1, column: 0 },
+							end: { line: 1, column: source.length },
+						},
+					},
+				},
+			}),
+		);
+		const args = [
+			cli,
+			"score",
+			"--coverage-file",
+			"node.json",
+			"--coverage-file",
+			"browser.json",
+			"--json",
+		];
+		const normal = spawnSync(process.execPath, args, { cwd, encoding: "utf8" });
+		assert.equal(normal.status, 0, normal.stderr);
+		assert.equal(JSON.parse(normal.stdout).summary.passed, true);
+
+		const strict = spawnSync(
+			process.execPath,
+			[...args, "--require-every-coverage-file", "--report-only"],
+			{ cwd, encoding: "utf8" },
+		);
+		assert.equal(strict.status, 1);
+		assert.equal(strict.stdout, "");
+		assert.match(strict.stderr, /Empty coverage JSON: .*node\.json/);
+
+		const nonempty = spawnSync(
+			process.execPath,
+			[
+				cli,
+				"score",
+				"--coverage-file",
+				"browser.json",
+				"--require-every-coverage-file",
+			],
+			{ cwd, encoding: "utf8" },
+		);
+		assert.equal(nonempty.status, 0, nonempty.stderr);
+	} finally {
+		rmSync(cwd, { force: true, recursive: true });
+	}
+});
+
 test("rejects non-boolean and non-string config values", async () => {
 	const cwd = mkdtempSync(join(tmpdir(), "crap-cli-typed-config-"));
 
 	try {
 		for (const [config, message] of [
+			[{ failOnIgnored: "true" }, /failOnIgnored must be a boolean/],
 			[{ reportOnly: "false" }, /reportOnly must be a boolean/],
+			[
+				{ requireEveryCoverageFile: 1 },
+				/requireEveryCoverageFile must be a boolean/,
+			],
 			[{ skipCoverage: 1 }, /skipCoverage must be a boolean/],
 			[
 				{ coverageCommand: ["npm", "test"] },

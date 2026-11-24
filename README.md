@@ -91,10 +91,13 @@ Scores are compared unrounded: with `max` 30, a score of exactly 30 passes and
 
 `crap-ts score` walks the working directory for `.ts`, `.tsx`, `.mts` and
 `.cts` files, skipping `node_modules`, directories whose name starts with `.`,
-symbolic links and `.d.ts` declarations. `include` and `exclude` filter that
-inventory by path substring (relative to the working directory, `/`
-separators). Files named in the coverage JSON that pass the same filters are
-analyzed too, even when their extension is not in the list above.
+symbolic links and `.d.ts` declarations. `include` and `exclude` match paths
+relative to the working directory. A pattern ending in `/**` matches files
+below a directory at that root. For example, `src/**` matches `src/a.ts`
+and `src/lib/b.ts`. Other patterns match substrings. For example, `src/`
+also matches `tests/fixtures/src/c.ts`. Both forms accept `/` and `\` as
+separators. The same filters apply to files named in the coverage JSON,
+which can have other extensions.
 
 An inventoried file with no coverage entry **fails the gate** if it contains a
 function body or an executable module-level statement. Declaration-only files
@@ -130,9 +133,9 @@ Coverage is per function, from Istanbul statement counters:
   entry, or the function was added after coverage ran.
 - The exception is code under a coverage ignore comment, which coverage tools
   leave without counters on purpose. Such a function is listed with
-  `evidence: "ignored"` and level `ignored`, never fails or warns, and sorts
-  after every other row. Its `coverage` (0) and `crap` are shown for
-  reference only. crap-ts recognises `istanbul`, `v8` and `c8` comments
+  `evidence: "ignored"` and sorts after every other row. By default, its
+  level is `ignored` and it does not affect the gate. Its `coverage` (0) and
+  `crap` are shown for reference only. crap-ts recognises `istanbul`, `v8` and `c8` comments
   (block or line):
   - `ignore next` covers the next statement or declaration, including any
     functions inside it.
@@ -140,19 +143,30 @@ Coverage is per function, from Istanbul statement counters:
   - `ignore if` and `ignore else`, before an `if` statement, cover its `if`
     branch or its `else` branch.
   - `ignore start` … `ignore stop` covers the region between them.
-  - `ignore file` covers the whole file, which then needs no coverage entry.
+  - `ignore file` covers the whole file. By default, the file needs no
+    coverage entry.
 
   Comment-like text inside strings, template literals, regular expressions
   and JSX text is not treated as a comment.
 
   An ignore comment only exempts a function that has no counters. If the
   coverage tool still measured it, its counters are used.
+
+  Set `failOnIgnored: true` or pass `--fail-on-ignored` to fail on audited
+  functions with `evidence: "ignored"`. The text report names these functions
+  even when they fall outside `--limit`. An executable file with an
+  `ignore file` comment also needs a coverage entry when this setting is on.
 - Module-level statements belong to no function.
 
 Pass `--coverage-file` more than once (or a `coverageFile` array) to merge
 runs, such as Node and browser suites. Entries for the same file are merged by
 each counter's original source position, never by counter id or by averaging
 percentages.
+
+By default, a coverage file containing `{}` contributes no entries to the
+audit. Set `requireEveryCoverageFile: true` or pass
+`--require-every-coverage-file` to reject it before applying path filters.
+The CLI exits with code 1 and names the empty file, even with `--report-only`.
 
 `crap-ts` refuses coverage whose statements start outside the current source
 (a line that does not exist, or a column past the end of the line): re-run
@@ -195,7 +209,8 @@ abstract methods have no body and no row. Unnamed functions are reported as
 
 `minLines` (default 10) hides functions shorter than that many lines from both
 reports and the gate. A function fails when its score is above `max` or its
-evidence is `missing`. Functions with evidence `ignored` never fail or warn.
+evidence is `missing`. With `failOnIgnored` enabled, it also fails when its
+evidence is `ignored`.
 
 When the CRAP check flags a hotspot:
 
@@ -222,10 +237,12 @@ error.
 - `--coverage-file <path>`: Istanbul `coverage-final.json`. Repeat to merge
   several runs. Defaults to `coverage/unit/coverage-final.json`.
 - `--coverage-command <cmd>`: run a coverage command before scoring.
-- `--include <text>`: only analyze source files whose path contains this text.
-  Repeatable.
-- `--exclude <text>`: skip source files whose path contains this text.
-  Repeatable.
+- `--include <pattern>`: only analyze matching paths. Repeatable. Quote
+  patterns like `'src/**'` to pass them directly to crap-ts.
+- `--exclude <pattern>`: skip matching paths. Repeatable.
+- `--fail-on-ignored`: fail on ignored functions and require coverage entries
+  for executable files with an `ignore file` comment.
+- `--require-every-coverage-file`: reject listed coverage files containing `{}`.
 - `--json`: print the JSON report instead of the text report.
 - `--all`: print every analyzed function instead of applying `--limit`.
 - `--limit <n>`: number of text report rows to print. Defaults to `20`.
@@ -237,9 +254,9 @@ error.
 - `--skip-coverage`: do not run the coverage command.
 
 Exit codes: `0` passed (or `--report-only`), `1` gate failed, coverage
-command failed, or coverage input is missing, malformed or stale, `2` usage or
-config error (unknown
-command or flag, invalid value, unreadable or invalid config file).
+command failed, or coverage input is missing, malformed, stale or rejected
+for being empty, `2` usage or config error (unknown command or flag, invalid
+value, unreadable or invalid config file).
 
 When the coverage command fails, `crap-ts` exits `1` before scoring and
 prints no report, not even with `--json`.
@@ -260,6 +277,8 @@ word, because you'd be mad at me if it didn't, and I'd also be mad at me.
 | `coverageFile` | string or string[] | `--coverage-file` | `coverage/unit/coverage-final.json` |
 | `include` | string or string[] | `--include` | everything |
 | `exclude` | string or string[] | `--exclude` | nothing |
+| `failOnIgnored` | boolean | `--fail-on-ignored` | `false` |
+| `requireEveryCoverageFile` | boolean | `--require-every-coverage-file` | `false` |
 | `json` | boolean | `--json` | `false` |
 | `all` | boolean | `--all` | `false` |
 | `limit` | number | `--limit` | `20` |
@@ -312,11 +331,13 @@ changed in meaning. A breaking change bumps `schemaVersion`.
 
 - `thresholds.warn` is `null` when no warn threshold is set.
 - `summary.files`: source files analyzed. `functions`: rows listed.
-  `aboveMax`: rows with `crap > max`, not counting `ignored` rows. `warning`: rows with level `warn`.
+  `aboveMax`: rows with `crap > max`, excluding rows with evidence `ignored`.
+  `warning`: rows with level `warn`.
   `missingEvidence`: rows with evidence `missing`. `ignored`: rows with
   evidence `ignored`. `missingFiles`: length of `missingFiles`.
-- `summary.passed` is the gate verdict, `aboveMax`, `missingEvidence` and
-  `missingFiles` all zero, and ignores `--report-only`.
+- `summary.passed` is true when `aboveMax`, `missingEvidence` and
+  `missingFiles` are all zero. With `failOnIgnored` enabled, `ignored` must
+  also be zero. The verdict is independent of `--report-only`.
 - `functions` lists every function at or above `minLines`, never truncated by
   `--limit`, sorted by `crap` descending, then `file`, `line`, `column`, with
   `ignored` rows after all others.
@@ -326,9 +347,10 @@ changed in meaning. A breaking change bumps `schemaVersion`.
   unrounded.
 - `evidence` is `statements`, `function`, `ignored` or `missing` (see
   [Coverage](#coverage)).
-- `level` is `fail` (above `max`, or missing evidence), `warn` (above `warn`),
-  `ignored` (evidence `ignored`) or `ok`. For `ignored` rows, `coverage` is 0
-  and `crap` is the score at 0% coverage, for reference only.
+- `level` is `fail` (above `max`, missing evidence, or ignored evidence with
+  `failOnIgnored` enabled), `warn` (above `warn`), `ignored` or `ok`. With
+  ignored evidence, `coverage` is 0 and `crap` is the score at 0% coverage,
+  for reference only.
 - `missingFiles` lists inventoried files with executable code and no coverage
   entry, sorted.
 
@@ -341,10 +363,11 @@ The package root is the only entry point. These exports, and the types in
   audit as the CLI and resolves to its exit code (`2` for invalid options,
   including non-finite numbers; `1` for a failed gate, a failed coverage
   command or a missing coverage file). It rejects with an `Error`
-  when coverage or source input is malformed or stale. Options mirror the config
-  keys: `coverageCommand`, `coveragePaths`, `cwd`, `includes`, `excludes`,
-  `json`, `all`, `limit`, `maxScore`, `warnScore`, `minLines`, `reportOnly`,
-  `skipCoverage`.
+  when coverage or source input is malformed or stale, or when a required
+  coverage file is empty. Options include `coverageCommand`, `coveragePaths`,
+  `cwd`, `includes`, `excludes`, `failOnIgnored`, `requireEveryCoverageFile`,
+  `json`, `all`, `limit`, `maxScore`, `warnScore`, `minLines`, `reportOnly`
+  and `skipCoverage`.
 - `analyzeFileRisk({ filePath, sourceText, coverage?, minLines?, sourceFilePath? }): Promise<FunctionRisk[]>`
   scores the functions in one source text. `coverage` is that file's entry
   from `coverage-final.json`. A function without counters has

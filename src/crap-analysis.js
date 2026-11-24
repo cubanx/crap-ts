@@ -33,6 +33,7 @@ export async function analyzeFileRisk({
 
 export async function analyzeSource({
 	coverage,
+	failOnIgnored = false,
 	filePath,
 	sourceFilePath,
 	sourceText,
@@ -53,7 +54,7 @@ export async function analyzeSource({
 
 	return {
 		executable:
-			!ignore.file &&
+			(!ignore.file || failOnIgnored) &&
 			(functions.length > 0 || hasExecutableModuleStatements(adapter)),
 		functions: functions.map(({ ignored, risk }) => {
 			// No counters is only acceptable where an ignore comment removed them.

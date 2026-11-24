@@ -16,12 +16,14 @@ export async function runCrapAudit({
 	coveragePaths = ["coverage/unit/coverage-final.json"],
 	cwd = process.cwd(),
 	excludes = [],
+	failOnIgnored = false,
 	includes = [],
 	json = false,
 	limit = 20,
 	maxScore = 30,
 	minLines = 10,
 	reportOnly = false,
+	requireEveryCoverageFile = false,
 	skipCoverage = false,
 	warnScore,
 } = {}) {
@@ -78,7 +80,11 @@ export async function runCrapAudit({
 	// Coverage tools report real paths; compare everything in the file
 	// system's canonical form (`.native` also canonicalises letter case).
 	const root = realpathSync.native(cwd);
-	const coverageByFile = readCoverageFiles(resolvedCoveragePaths, root);
+	const coverageByFile = readCoverageFiles(
+		resolvedCoveragePaths,
+		root,
+		requireEveryCoverageFile,
+	);
 	const isSelected = (path) => {
 		const relativePath = relative(root, path);
 		return (
@@ -102,6 +108,7 @@ export async function runCrapAudit({
 		const coverage = coverageByFile.get(sourceFilePath);
 		const analysis = await analyzeSource({
 			coverage,
+			failOnIgnored,
 			filePath,
 			sourceFilePath,
 			sourceText: readFileSync(sourceFilePath, "utf8"),
@@ -117,6 +124,7 @@ export async function runCrapAudit({
 	}
 
 	const report = buildReport({
+		failOnIgnored,
 		files: sourcePaths.size,
 		functions,
 		maxScore,
@@ -163,6 +171,7 @@ export async function runCrapAudit({
 }
 
 function buildReport({
+	failOnIgnored,
 	files,
 	functions,
 	maxScore,
@@ -173,7 +182,7 @@ function buildReport({
 	const rows = functions
 		.sort(
 			(left, right) =>
-				// Ignored rows never gate, so keep them below every gated row.
+				// Keep ignored scores below rows that use coverage to score the gate.
 				Number(left.evidence === "ignored") -
 					Number(right.evidence === "ignored") ||
 				right.crapScore - left.crapScore ||
@@ -194,13 +203,13 @@ function buildReport({
 			coveredStatements: risk.coveredStatements,
 			evidence: risk.evidence,
 			crap: risk.crapScore,
-			level: getRiskLevel(risk, { maxScore, warnScore }),
+			level: getRiskLevel(risk, { failOnIgnored, maxScore, warnScore }),
 		}));
 	const count = (predicate) => rows.filter(predicate).length;
 	const summary = {
 		files,
 		functions: rows.length,
-		aboveMax: count((row) => row.level !== "ignored" && row.crap > maxScore),
+		aboveMax: count((row) => row.evidence !== "ignored" && row.crap > maxScore),
 		warning: count((row) => row.level === "warn"),
 		missingEvidence: count((row) => row.evidence === "missing"),
 		ignored: count((row) => row.evidence === "ignored"),
@@ -215,7 +224,8 @@ function buildReport({
 			passed:
 				summary.aboveMax === 0 &&
 				summary.missingEvidence === 0 &&
-				summary.missingFiles === 0,
+				summary.missingFiles === 0 &&
+				(!failOnIgnored || summary.ignored === 0),
 		},
 		functions: rows,
 		missingFiles,
@@ -240,8 +250,14 @@ function printTextReport({ all, limit, maxScore, report, warnScore }) {
 		`CRAP report: ${summary.functions} functions checked, ${summary.aboveMax} above ${maxScore}${warningSummary}${missingSummary}${ignoredSummary}.`,
 	);
 
-	for (const row of all ? functions : functions.slice(0, limit)) {
+	const visibleRows = all ? functions : functions.slice(0, limit);
+	for (const row of visibleRows) {
 		console.log(formatReportRow(row));
+	}
+	for (const row of functions.slice(visibleRows.length)) {
+		if (row.evidence === "ignored" && row.level === "fail") {
+			console.log(formatReportRow(row));
+		}
 	}
 }
 
@@ -260,9 +276,9 @@ function formatReportRow(row) {
 	].join(" | ");
 }
 
-function getRiskLevel(risk, { maxScore, warnScore }) {
+function getRiskLevel(risk, { failOnIgnored, maxScore, warnScore }) {
 	if (risk.evidence === "ignored") {
-		return "ignored";
+		return failOnIgnored ? "fail" : "ignored";
 	}
 
 	if (risk.crapScore > maxScore || risk.evidence === "missing") {
@@ -276,14 +292,19 @@ function getRiskLevel(risk, { maxScore, warnScore }) {
 	return "ok";
 }
 
-function readCoverageFiles(coveragePaths, root) {
+function readCoverageFiles(coveragePaths, root, requireEveryCoverageFile) {
 	const coverageByFile = new Map();
 
 	for (const coveragePath of coveragePaths) {
 		const coverageJson = parseCoverageJson(coveragePath);
 		assertObject(coverageJson, coveragePath);
+		const entries = Object.entries(coverageJson);
 
-		for (const [key, entry] of Object.entries(coverageJson)) {
+		if (requireEveryCoverageFile && entries.length === 0) {
+			throw new Error(`Empty coverage JSON: ${coveragePath}`);
+		}
+
+		for (const [key, entry] of entries) {
 			const label = `${coveragePath} (${key})`;
 			validateFileCoverage(entry, label);
 
@@ -445,7 +466,18 @@ function matchesAny(path, patterns, emptyResult) {
 
 	const normalizedPath = normalizePath(path);
 
-	return patterns.some((pattern) =>
-		normalizedPath.includes(normalizePath(pattern)),
-	);
+	return patterns.some((pattern) => {
+		const normalizedPattern = normalizePath(pattern);
+
+		if (normalizedPattern.endsWith("/**")) {
+			return (
+				!isAbsolute(path) &&
+				normalizedPath !== ".." &&
+				!normalizedPath.startsWith("../") &&
+				normalizedPath.startsWith(normalizedPattern.slice(0, -2))
+			);
+		}
+
+		return normalizedPath.includes(normalizedPattern);
+	});
 }
