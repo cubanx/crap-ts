@@ -12,6 +12,7 @@ const declarationFilePattern = /\.d\.[cm]?ts$/;
 
 export async function runCrapAudit({
 	all = false,
+	allowEmptyCoverage = false,
 	coverageCommand,
 	coveragePaths = ["coverage/unit/coverage-final.json"],
 	cwd = process.cwd(),
@@ -23,7 +24,6 @@ export async function runCrapAudit({
 	maxScore = 30,
 	minLines = 10,
 	reportOnly = false,
-	requireEveryCoverageFile = false,
 	skipCoverage = false,
 	warnScore,
 } = {}) {
@@ -42,6 +42,18 @@ export async function runCrapAudit({
 	if (warnScore !== undefined && warnScore > maxScore) {
 		console.error(
 			`CRAP warn (${warnScore}) must not exceed max (${maxScore}).`,
+		);
+		return 2;
+	}
+
+	const unsupportedPattern = [...includes, ...excludes].find((pattern) =>
+		normalizePath(pattern)
+			.replace(/\/\*\*$/, "")
+			.includes("*"),
+	);
+	if (unsupportedPattern !== undefined) {
+		console.error(
+			`Unsupported path pattern ${JSON.stringify(unsupportedPattern)}. Use a substring or a directory pattern such as src/**.`,
 		);
 		return 2;
 	}
@@ -83,7 +95,7 @@ export async function runCrapAudit({
 	const coverageByFile = readCoverageFiles(
 		resolvedCoveragePaths,
 		root,
-		requireEveryCoverageFile,
+		allowEmptyCoverage,
 	);
 	const isSelected = (path) => {
 		const relativePath = relative(root, path);
@@ -292,7 +304,7 @@ function getRiskLevel(risk, { failOnIgnored, maxScore, warnScore }) {
 	return "ok";
 }
 
-function readCoverageFiles(coveragePaths, root, requireEveryCoverageFile) {
+function readCoverageFiles(coveragePaths, root, allowEmptyCoverage) {
 	const coverageByFile = new Map();
 
 	for (const coveragePath of coveragePaths) {
@@ -300,7 +312,7 @@ function readCoverageFiles(coveragePaths, root, requireEveryCoverageFile) {
 		assertObject(coverageJson, coveragePath);
 		const entries = Object.entries(coverageJson);
 
-		if (requireEveryCoverageFile && entries.length === 0) {
+		if (!allowEmptyCoverage && entries.length === 0) {
 			throw new Error(`Empty coverage JSON: ${coveragePath}`);
 		}
 

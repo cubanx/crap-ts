@@ -239,6 +239,32 @@ test("anchors directory patterns for source inventory and coverage entries", asy
 	);
 });
 
+test("rejects unsupported wildcards before scoring", async () => {
+	await withProject(
+		{ "coverage.json": {}, "src/odo.ts": firstSource },
+		async (cwd) => {
+			for (const [filter, pattern] of [
+				["includes", "src/**/*.ts"],
+				["includes", "src/*.ts"],
+				["includes", "src/*/**"],
+				["excludes", "src/*.ts"],
+			]) {
+				const messages = await captureConsole(() =>
+					runCrapAudit({
+						coveragePaths: ["coverage.json"],
+						cwd,
+						[filter]: [pattern],
+					}),
+				);
+				assert.equal(messages.result, 2, pattern);
+				assert.deepEqual(messages.logs, []);
+				assert.match(messages.errors.join("\n"), /Unsupported path pattern/);
+				assert.ok(messages.errors.join("\n").includes(pattern));
+			}
+		},
+	);
+});
+
 test("matches real-path coverage keys from a symlinked working directory", async () => {
 	await withProject({ "first.ts": firstSource }, async (realCwd) => {
 		const linkedCwd = `${realCwd}-linked`;
@@ -363,6 +389,7 @@ test("lists functions in files without coverage as missing evidence", async () =
 		async (cwd) => {
 			const messages = await captureConsole(() =>
 				runCrapAudit({
+					allowEmptyCoverage: true,
 					coveragePaths: ["coverage-final.json"],
 					cwd,
 					minLines: 1,
@@ -736,6 +763,7 @@ test("exempts files with a file-level ignore comment from missing evidence", asy
 			for (const failOnIgnored of [false, true]) {
 				const messages = await captureConsole(() =>
 					runCrapAudit({
+						allowEmptyCoverage: true,
 						coveragePaths: ["coverage-final.json"],
 						cwd,
 						failOnIgnored,

@@ -25,8 +25,8 @@ Options:
   --exclude <pattern> Skip matching source paths. Use dir/** to anchor.
   --fail-on-ignored
                     Fail when an audited function has coverage evidence marked ignored.
-  --require-every-coverage-file
-                    Reject listed coverage JSON files with no entries.
+  --allow-empty-coverage
+                    Accept listed coverage JSON files with no entries.
   --json           Print the full JSON report (schema version 1) instead of text.
   --limit <n>      Number of rows to print in the text report. Defaults to 20.
   --min-lines <n>  Ignore functions shorter than this. Defaults to 10.
@@ -45,6 +45,7 @@ export function parseCliArgs(argv, { cwd = process.cwd() } = {}) {
 		args,
 		options: {
 			all: { type: "boolean" },
+			"allow-empty-coverage": { type: "boolean" },
 			config: { type: "string" },
 			"coverage-file": { type: "string", multiple: true },
 			"coverage-command": { type: "string" },
@@ -57,7 +58,6 @@ export function parseCliArgs(argv, { cwd = process.cwd() } = {}) {
 			max: { type: "string" },
 			"min-lines": { type: "string" },
 			"report-only": { type: "boolean" },
-			"require-every-coverage-file": { type: "boolean" },
 			"skip-coverage": { type: "boolean" },
 			warn: { type: "string" },
 		},
@@ -68,6 +68,7 @@ export function parseCliArgs(argv, { cwd = process.cwd() } = {}) {
 		mergeConfigWithCli(config, {
 			command,
 			all: values.all,
+			allowEmptyCoverage: values["allow-empty-coverage"],
 			configPath: values.config,
 			coverageCommand: values["coverage-command"],
 			coveragePaths: values["coverage-file"],
@@ -80,7 +81,6 @@ export function parseCliArgs(argv, { cwd = process.cwd() } = {}) {
 			maxScore: parseOptionalNumber(values.max, "--max"),
 			minLines: parseOptionalNumber(values["min-lines"], "--min-lines"),
 			reportOnly: values["report-only"],
-			requireEveryCoverageFile: values["require-every-coverage-file"],
 			skipCoverage: values["skip-coverage"],
 			warnScore: parseOptionalNumber(values.warn, "--warn"),
 		}),
@@ -166,6 +166,7 @@ function mergeConfigWithCli(config, cliOptions) {
 
 const configKeys = new Set([
 	"all",
+	"allowEmptyCoverage",
 	"coverageCommand",
 	"coverageFile",
 	"exclude",
@@ -176,7 +177,6 @@ const configKeys = new Set([
 	"max",
 	"minLines",
 	"reportOnly",
-	"requireEveryCoverageFile",
 	"skipCoverage",
 	"warn",
 ]);
@@ -196,6 +196,11 @@ function normalizeConfig(config) {
 
 	return stripUndefined({
 		all: parseConfigType(config.all, "all", "boolean"),
+		allowEmptyCoverage: parseConfigType(
+			config.allowEmptyCoverage,
+			"allowEmptyCoverage",
+			"boolean",
+		),
 		coverageCommand: parseConfigType(
 			config.coverageCommand,
 			"coverageCommand",
@@ -214,11 +219,6 @@ function normalizeConfig(config) {
 		maxScore: parseConfigNumber(config.max, "max"),
 		minLines: parseConfigNumber(config.minLines, "minLines"),
 		reportOnly: parseConfigType(config.reportOnly, "reportOnly", "boolean"),
-		requireEveryCoverageFile: parseConfigType(
-			config.requireEveryCoverageFile,
-			"requireEveryCoverageFile",
-			"boolean",
-		),
 		skipCoverage: parseConfigType(
 			config.skipCoverage,
 			"skipCoverage",

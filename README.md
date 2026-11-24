@@ -94,8 +94,9 @@ Scores are compared unrounded: with `max` 30, a score of exactly 30 passes and
 symbolic links and `.d.ts` declarations. `include` and `exclude` match paths
 relative to the working directory. A pattern ending in `/**` matches files
 below a directory at that root. For example, `src/**` matches `src/a.ts`
-and `src/lib/b.ts`. Other patterns match substrings. For example, `src/`
-also matches `tests/fixtures/src/c.ts`. Both forms accept `/` and `\` as
+and `src/lib/b.ts`. Plain patterns match substrings. For example, `src/`
+also matches `tests/fixtures/src/c.ts`. An asterisk outside the trailing
+`/**` is a usage error. Both forms accept `/` and `\` as
 separators. The same filters apply to files named in the coverage JSON,
 which can have other extensions.
 
@@ -163,10 +164,10 @@ runs, such as Node and browser suites. Entries for the same file are merged by
 each counter's original source position, never by counter id or by averaging
 percentages.
 
-By default, a coverage file containing `{}` contributes no entries to the
-audit. Set `requireEveryCoverageFile: true` or pass
-`--require-every-coverage-file` to reject it before applying path filters.
-The CLI exits with code 1 and names the empty file, even with `--report-only`.
+Each listed coverage file must contain at least one source entry. The CLI
+rejects `{}` before applying path filters, exits with code 1, and names the
+empty file. This check also runs with `--report-only`. To accept empty files
+as in 1.0, set `allowEmptyCoverage: true` or pass `--allow-empty-coverage`.
 
 `crap-ts` refuses coverage whose statements start outside the current source
 (a line that does not exist, or a column past the end of the line): re-run
@@ -242,7 +243,7 @@ error.
 - `--exclude <pattern>`: skip matching paths. Repeatable.
 - `--fail-on-ignored`: fail on ignored functions and require coverage entries
   for executable files with an `ignore file` comment.
-- `--require-every-coverage-file`: reject listed coverage files containing `{}`.
+- `--allow-empty-coverage`: accept listed coverage files containing `{}`.
 - `--json`: print the JSON report instead of the text report.
 - `--all`: print every analyzed function instead of applying `--limit`.
 - `--limit <n>`: number of text report rows to print. Defaults to `20`.
@@ -278,7 +279,7 @@ word, because you'd be mad at me if it didn't, and I'd also be mad at me.
 | `include` | string or string[] | `--include` | everything |
 | `exclude` | string or string[] | `--exclude` | nothing |
 | `failOnIgnored` | boolean | `--fail-on-ignored` | `false` |
-| `requireEveryCoverageFile` | boolean | `--require-every-coverage-file` | `false` |
+| `allowEmptyCoverage` | boolean | `--allow-empty-coverage` | `false` |
 | `json` | boolean | `--json` | `false` |
 | `all` | boolean | `--all` | `false` |
 | `limit` | number | `--limit` | `20` |
@@ -364,8 +365,9 @@ The package root is the only entry point. These exports, and the types in
   including non-finite numbers; `1` for a failed gate, a failed coverage
   command or a missing coverage file). It rejects with an `Error`
   when coverage or source input is malformed or stale, or when a required
-  coverage file is empty. Options include `coverageCommand`, `coveragePaths`,
-  `cwd`, `includes`, `excludes`, `failOnIgnored`, `requireEveryCoverageFile`,
+  coverage file is empty and `allowEmptyCoverage` is false. Options include
+  `coverageCommand`, `coveragePaths`, `cwd`, `includes`, `excludes`,
+  `failOnIgnored`, `allowEmptyCoverage`,
   `json`, `all`, `limit`, `maxScore`, `warnScore`, `minLines`, `reportOnly`
   and `skipCoverage`.
 - `analyzeFileRisk({ filePath, sourceText, coverage?, minLines?, sourceFilePath? }): Promise<FunctionRisk[]>`

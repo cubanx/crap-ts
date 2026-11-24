@@ -28,7 +28,7 @@ test("parses direct audit flags", () => {
 		"/scripts/",
 		"--all",
 		"--fail-on-ignored",
-		"--require-every-coverage-file",
+		"--allow-empty-coverage",
 		"--report-only",
 		"--max",
 		"40",
@@ -51,7 +51,7 @@ test("parses direct audit flags", () => {
 	assert.equal(options.json, true);
 	assert.equal(options.all, true);
 	assert.equal(options.failOnIgnored, true);
-	assert.equal(options.requireEveryCoverageFile, true);
+	assert.equal(options.allowEmptyCoverage, true);
 	assert.equal(options.reportOnly, true);
 	assert.equal(options.maxScore, 40);
 	assert.equal(options.warnScore, 35);
@@ -79,7 +79,7 @@ test("loads default .crap-ts.json config", () => {
 			max: 42,
 			minLines: 3,
 			reportOnly: true,
-			requireEveryCoverageFile: true,
+			allowEmptyCoverage: true,
 			skipCoverage: true,
 			warn: 35,
 		}),
@@ -102,7 +102,7 @@ test("loads default .crap-ts.json config", () => {
 	assert.equal(options.maxScore, 42);
 	assert.equal(options.minLines, 3);
 	assert.equal(options.reportOnly, true);
-	assert.equal(options.requireEveryCoverageFile, true);
+	assert.equal(options.allowEmptyCoverage, true);
 	assert.equal(options.skipCoverage, true);
 	assert.equal(options.warnScore, 35);
 });
@@ -226,7 +226,7 @@ test("reports invalid flags as usage errors", async () => {
 	]);
 });
 
-test("rejects an empty run in a coverage merge when required", () => {
+test("rejects an empty run by default and allows an explicit opt-out", () => {
 	const cwd = mkdtempSync(join(tmpdir(), "crap-cli-empty-coverage-"));
 	const cli = fileURLToPath(new URL("../src/cli.js", import.meta.url));
 
@@ -260,27 +260,21 @@ test("rejects an empty run in a coverage merge when required", () => {
 			"--json",
 		];
 		const normal = spawnSync(process.execPath, args, { cwd, encoding: "utf8" });
-		assert.equal(normal.status, 0, normal.stderr);
-		assert.equal(JSON.parse(normal.stdout).summary.passed, true);
+		assert.equal(normal.status, 1);
+		assert.equal(normal.stdout, "");
+		assert.match(normal.stderr, /Empty coverage JSON: .*node\.json/);
 
-		const strict = spawnSync(
+		const allowed = spawnSync(
 			process.execPath,
-			[...args, "--require-every-coverage-file", "--report-only"],
+			[...args, "--allow-empty-coverage"],
 			{ cwd, encoding: "utf8" },
 		);
-		assert.equal(strict.status, 1);
-		assert.equal(strict.stdout, "");
-		assert.match(strict.stderr, /Empty coverage JSON: .*node\.json/);
+		assert.equal(allowed.status, 0, allowed.stderr);
+		assert.equal(JSON.parse(allowed.stdout).summary.passed, true);
 
 		const nonempty = spawnSync(
 			process.execPath,
-			[
-				cli,
-				"score",
-				"--coverage-file",
-				"browser.json",
-				"--require-every-coverage-file",
-			],
+			[cli, "score", "--coverage-file", "browser.json"],
 			{ cwd, encoding: "utf8" },
 		);
 		assert.equal(nonempty.status, 0, nonempty.stderr);
@@ -296,10 +290,7 @@ test("rejects non-boolean and non-string config values", async () => {
 		for (const [config, message] of [
 			[{ failOnIgnored: "true" }, /failOnIgnored must be a boolean/],
 			[{ reportOnly: "false" }, /reportOnly must be a boolean/],
-			[
-				{ requireEveryCoverageFile: 1 },
-				/requireEveryCoverageFile must be a boolean/,
-			],
+			[{ allowEmptyCoverage: 1 }, /allowEmptyCoverage must be a boolean/],
 			[{ skipCoverage: 1 }, /skipCoverage must be a boolean/],
 			[
 				{ coverageCommand: ["npm", "test"] },
