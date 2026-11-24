@@ -181,6 +181,32 @@ test("merges several coverage files by source position, not counter id", async (
 	);
 });
 
+test("exits with an input error when a listed coverage file is empty", async () => {
+	await withProject(
+		{
+			".crap-ts.json": { coverageFile: ["browser.json", "node.json"] },
+			"browser.json": { "first.ts": branchCoverage([1, 1, 1]) },
+			"first.ts": firstSource,
+			"node.json": {},
+		},
+		async (cwd) => {
+			const { spawnSync } = await import("node:child_process");
+			const result = spawnSync(
+				process.execPath,
+				[join(repoRoot, "src/cli.js"), "score", "--min-lines", "1", "--json"],
+				{ cwd, encoding: "utf8" },
+			);
+
+			assert.equal(result.status, 1);
+			assert.equal(result.stdout, "");
+			assert.equal(
+				result.stderr.trim(),
+				`Error: Coverage JSON has no entries: ${join(realpathSync(cwd), "node.json")}`,
+			);
+		},
+	);
+});
+
 test("matches real-path coverage keys from a symlinked working directory", async () => {
 	await withProject({ "first.ts": firstSource }, async (realCwd) => {
 		const linkedCwd = `${realCwd}-linked`;
@@ -299,8 +325,9 @@ test("fails source files without coverage evidence and exempts declaration-only 
 test("lists functions in files without coverage as missing evidence", async () => {
 	await withProject(
 		{
-			"coverage-final.json": {},
+			"coverage-final.json": { "second.ts": branchCoverage([1, 1, 1]) },
 			"first.ts": firstSource,
+			"second.ts": secondSource,
 		},
 		async (cwd) => {
 			const messages = await captureConsole(() =>
@@ -315,7 +342,7 @@ test("lists functions in files without coverage as missing evidence", async () =
 			assert.equal(messages.result, 1);
 			assert.match(
 				messages.logs.join("\n"),
-				/1 functions checked, 0 above 30, 1 without coverage evidence/,
+				/2 functions checked, 0 above 30, 1 without coverage evidence/,
 			);
 			assert.match(
 				messages.logs.join("\n"),
@@ -596,9 +623,10 @@ test("fails functions without counters that no ignore comment covers", async () 
 test("exempts files with a file-level ignore comment from missing evidence", async () => {
 	await withProject(
 		{
-			"coverage-final.json": {},
+			"coverage-final.json": { "second.ts": branchCoverage([1, 1, 1]) },
 			"holosuite.ts":
 				"/* istanbul ignore file */\nexport const program = vicFontaine();\n",
+			"second.ts": secondSource,
 		},
 		async (cwd) => {
 			const messages = await captureConsole(() =>

@@ -282,8 +282,13 @@ function readCoverageFiles(coveragePaths, root) {
 	for (const coveragePath of coveragePaths) {
 		const coverageJson = parseCoverageJson(coveragePath);
 		assertObject(coverageJson, coveragePath);
+		const entries = Object.entries(coverageJson);
 
-		for (const [key, entry] of Object.entries(coverageJson)) {
+		if (entries.length === 0) {
+			throw new Error(`Coverage JSON has no entries: ${coveragePath}`);
+		}
+
+		for (const [key, entry] of entries) {
 			const label = `${coveragePath} (${key})`;
 			validateFileCoverage(entry, label);
 

@@ -152,7 +152,10 @@ Coverage is per function, from Istanbul statement counters:
 Pass `--coverage-file` more than once (or a `coverageFile` array) to merge
 runs, such as Node and browser suites. Entries for the same file are merged by
 each counter's original source position, never by counter id or by averaging
-percentages.
+percentages. Each coverage JSON file must contain at least one source entry
+before `include` and `exclude` filters apply. If any file contains `{}`, the
+CLI prints its path to stderr and exits with code `1` before scoring, even
+with `--json` or `--report-only`.
 
 `crap-ts` refuses coverage whose statements start outside the current source
 (a line that does not exist, or a column past the end of the line): re-run
@@ -236,10 +239,9 @@ error.
 - `--report-only`: print results without failing on the gate.
 - `--skip-coverage`: do not run the coverage command.
 
-Exit codes: `0` passed (or `--report-only`), `1` gate failed, coverage
-command failed, or coverage input is missing, malformed or stale, `2` usage or
-config error (unknown
-command or flag, invalid value, unreadable or invalid config file).
+The CLI exits with `0` if the gate passes or `--report-only` applies. It exits
+with `1` if the gate or coverage command fails, or if coverage input is missing,
+empty, malformed, or stale. It exits with `2` for usage or config errors.
 
 When the coverage command fails, `crap-ts` exits `1` before scoring and
 prints no report, not even with `--json`.
@@ -341,10 +343,10 @@ The package root is the only entry point. These exports, and the types in
   audit as the CLI and resolves to its exit code (`2` for invalid options,
   including non-finite numbers; `1` for a failed gate, a failed coverage
   command or a missing coverage file). It rejects with an `Error`
-  when coverage or source input is malformed or stale. Options mirror the config
-  keys: `coverageCommand`, `coveragePaths`, `cwd`, `includes`, `excludes`,
-  `json`, `all`, `limit`, `maxScore`, `warnScore`, `minLines`, `reportOnly`,
-  `skipCoverage`.
+  if a coverage file is empty or if coverage or source input is malformed or
+  stale. Options mirror the config keys `coverageCommand`, `coveragePaths`,
+  `cwd`, `includes`, `excludes`, `json`, `all`, `limit`, `maxScore`, `warnScore`,
+  `minLines`, `reportOnly`, and `skipCoverage`.
 - `analyzeFileRisk({ filePath, sourceText, coverage?, minLines?, sourceFilePath? }): Promise<FunctionRisk[]>`
   scores the functions in one source text. `coverage` is that file's entry
   from `coverage-final.json`. A function without counters has
