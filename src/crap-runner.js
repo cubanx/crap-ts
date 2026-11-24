@@ -114,7 +114,9 @@ export async function runCrapAudit({
 	};
 	const isTestFile = (path) =>
 		testFilePattern.test(normalizePath(relative(root, path)));
-	const candidatePaths = new Set(listSourceFiles(root).filter(matchesFilters));
+	const candidatePaths = new Set(
+		listSourceFiles(root, namedDotDirectories(includes)).filter(matchesFilters),
+	);
 
 	// Coverage tools also list non-source modules (CSS, JSON) and even
 	// directories; only TypeScript and JavaScript sources can be scored.
@@ -493,14 +495,32 @@ function comparePositions(left, right, nullColumn) {
 	);
 }
 
-function listSourceFiles(directory) {
+// Dot directories that an include pattern names as a full path segment, such
+// as `.railway` in `.railway/**` or `apps/.railway/`. The walk enters only
+// these; the include and exclude filters still decide which files count.
+function namedDotDirectories(includes) {
+	return new Set(
+		includes.flatMap((pattern) =>
+			normalizePath(pattern)
+				.replace(/\/\*\*$/, "")
+				.split("/")
+				.filter(
+					(segment) =>
+						segment.startsWith(".") && segment !== "." && segment !== "..",
+				),
+		),
+	);
+}
+
+function listSourceFiles(directory, dotDirectories) {
 	return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
 		const path = join(directory, entry.name);
 
 		if (entry.isDirectory()) {
-			return entry.name === "node_modules" || entry.name.startsWith(".")
-				? []
-				: listSourceFiles(path);
+			const skipped =
+				entry.name === "node_modules" ||
+				(entry.name.startsWith(".") && !dotDirectories.has(entry.name));
+			return skipped ? [] : listSourceFiles(path, dotDirectories);
 		}
 
 		return entry.isFile() && isSourceFile(entry.name) ? [path] : [];
