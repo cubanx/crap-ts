@@ -336,6 +336,126 @@ test("matches coverage keys when the working directory differs only in case", as
 	});
 });
 
+test("scores only TypeScript sources from absolute coverage keys under relative includes", async () => {
+	await withProject(
+		{
+			"src/first.ts": firstSource,
+			"src/portrait.css": ".odo { color: amber; }",
+			"src/catalog.json": '{ "station": "Deep Space Nine" }',
+			"src/types.d.ts": "declare const quark: string;",
+			"scripts/second.ts": secondSource,
+			"docs/notes.md": "# Ops",
+		},
+		async (cwd) => {
+			const root = realpathSync.native(cwd);
+			const coverage = branchCoverage([1, 1, 1]);
+			writeFileSync(
+				join(cwd, "coverage-final.json"),
+				JSON.stringify({
+					[root]: coverage,
+					[join(root, "src/first.ts")]: coverage,
+					[join(root, "src/portrait.css")]: coverage,
+					[join(root, "src/catalog.json")]: coverage,
+					[join(root, "src/types.d.ts")]: coverage,
+					[join(root, "scripts/second.ts")]: coverage,
+					[join(root, "docs/notes.md")]: coverage,
+				}),
+			);
+
+			for (const extra of [{}, { includes: ["src/**", "scripts/**"] }]) {
+				const messages = await captureConsole(() =>
+					runCrapAudit({
+						coveragePaths: ["coverage-final.json"],
+						cwd,
+						json: true,
+						minLines: 1,
+						skipCoverage: true,
+						...extra,
+					}),
+				);
+				const report = JSON.parse(messages.logs.join("\n"));
+
+				assert.equal(messages.result, 0, messages.errors.join("\n"));
+				assert.deepEqual(
+					report.functions.map((row) => [row.file, row.evidence]).sort(),
+					[
+						["scripts/second.ts", "statements"],
+						["src/first.ts", "statements"],
+					],
+				);
+				assert.equal(report.summary.files, 2);
+			}
+		},
+	);
+});
+
+test("fails when the filters select no source files", async () => {
+	await withProject(
+		{
+			"coverage-final.json": { "src/first.ts": branchCoverage([1, 1, 1]) },
+			"src/first.ts": firstSource,
+		},
+		async (cwd) => {
+			for (const extra of [
+				{ includes: ["lib/**"] },
+				{ excludes: ["src/**"] },
+				{ includes: ["src/**"], reportOnly: true, excludes: ["first"] },
+			]) {
+				const messages = await captureConsole(() =>
+					runCrapAudit({
+						coveragePaths: ["coverage-final.json"],
+						cwd,
+						json: true,
+						minLines: 1,
+						skipCoverage: true,
+						...extra,
+					}),
+				);
+
+				assert.equal(messages.result, 1, JSON.stringify(extra));
+				assert.deepEqual(messages.logs, []);
+				assert.match(
+					messages.errors.join("\n"),
+					/No source files matched.*--include.*--exclude/s,
+				);
+			}
+		},
+	);
+});
+
+test("fails the gate when no functions are checked", async () => {
+	await withProject(
+		{
+			"coverage-final.json": { "src/first.ts": branchCoverage([1, 1, 1]) },
+			"src/first.ts": firstSource,
+		},
+		async (cwd) => {
+			const options = {
+				coveragePaths: ["coverage-final.json"],
+				cwd,
+				minLines: 50,
+				skipCoverage: true,
+			};
+			const strict = await captureConsole(() =>
+				runCrapAudit({ ...options, json: true }),
+			);
+			const report = JSON.parse(strict.logs.join("\n"));
+
+			assert.equal(strict.result, 1);
+			assert.equal(report.summary.functions, 0);
+			assert.equal(report.summary.passed, false);
+			assert.match(strict.errors.join("\n"), /No functions checked/);
+			assert.match(strict.errors.join("\n"), /CRAP check failed/);
+
+			const reportOnly = await captureConsole(() =>
+				runCrapAudit({ ...options, reportOnly: true }),
+			);
+			assert.equal(reportOnly.result, 0);
+			assert.match(reportOnly.errors.join("\n"), /No functions checked/);
+		},
+	);
+});
+
 test("fails source files without coverage evidence and exempts declaration-only files", async () => {
 	await withProject(
 		{
@@ -754,7 +874,8 @@ test("fails functions without counters that no ignore comment covers", async () 
 test("exempts files with a file-level ignore comment from missing evidence", async () => {
 	await withProject(
 		{
-			"coverage-final.json": {},
+			"coverage-final.json": { "first.ts": branchCoverage([1, 1, 1]) },
+			"first.ts": firstSource,
 			"holosuite.ts":
 				"/* istanbul ignore file */\nexport const program = vicFontaine();\n",
 			"types.ts": "/* v8 ignore file */\nexport type Station = string;\n",
@@ -763,11 +884,11 @@ test("exempts files with a file-level ignore comment from missing evidence", asy
 			for (const failOnIgnored of [false, true]) {
 				const messages = await captureConsole(() =>
 					runCrapAudit({
-						allowEmptyCoverage: true,
 						coveragePaths: ["coverage-final.json"],
 						cwd,
 						failOnIgnored,
 						json: true,
+						minLines: 1,
 						skipCoverage: true,
 					}),
 				);

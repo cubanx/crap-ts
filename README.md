@@ -97,8 +97,14 @@ below a directory at that root. For example, `src/**` matches `src/a.ts`
 and `src/lib/b.ts`. Plain patterns match substrings. For example, `src/`
 also matches `tests/fixtures/src/c.ts`. An asterisk outside the trailing
 `/**` is a usage error. Both forms accept `/` and `\` as
-separators. The same filters apply to files named in the coverage JSON,
-which can have other extensions.
+separators. The same filters apply to files named in the coverage JSON.
+Coverage entries for other files, such as CSS or JSON modules that Vitest
+reports for side-effect imports, are not scored.
+
+If the filters select no source files, `crap-ts` exits `1` before scoring,
+also with `--report-only`. If the selected files hold no function with at
+least `--min-lines` lines, the gate fails: a gate that checks nothing never
+passes. With `--report-only`, `crap-ts` prints a warning and exits `0`.
 
 An inventoried file with no coverage entry **fails the gate** if it contains a
 function body or an executable module-level statement. Declaration-only files
@@ -254,9 +260,9 @@ error.
 - `--report-only`: print results without failing on the gate.
 - `--skip-coverage`: do not run the coverage command.
 
-Exit codes: `0` passed (or `--report-only`), `1` gate failed, coverage
-command failed, or coverage input is missing, malformed, stale or rejected
-for being empty, `2` usage or config error (unknown command or flag, invalid
+Exit codes: `0` passed (or `--report-only`), `1` gate failed, no source
+files matched the filters, coverage command failed, or coverage input is
+missing, malformed, stale or rejected for being empty, `2` usage or config error (unknown command or flag, invalid
 value, unreadable or invalid config file).
 
 When the coverage command fails, `crap-ts` exits `1` before scoring and

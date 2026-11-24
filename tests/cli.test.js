@@ -226,20 +226,37 @@ test("reports invalid flags as usage errors", async () => {
 	]);
 });
 
+test("points positional directories to --include", async () => {
+	const messages = await captureConsole(async () => {
+		assert.equal(await main(["score", "src", "scripts"]), 2);
+	});
+
+	assert.equal(messages.errors.length, 1);
+	assert.match(messages.errors[0], /^Usage error: Unexpected argument 'src'/);
+	assert.match(messages.errors[0], /--include 'src\/\*\*'/);
+});
+
 test("rejects an empty run by default and allows an explicit opt-out", () => {
 	const cwd = mkdtempSync(join(tmpdir(), "crap-cli-empty-coverage-"));
 	const cli = fileURLToPath(new URL("../src/cli.js", import.meta.url));
 
 	try {
-		const source = "export const station = 'Deep Space Nine';";
+		const source = "export const station = () => 'Deep Space Nine';";
 		writeFileSync(join(cwd, "node.json"), "{}");
 		writeFileSync(join(cwd, "ops.ts"), source);
 		writeFileSync(
 			join(cwd, "browser.json"),
 			JSON.stringify({
 				"ops.ts": {
-					f: {},
-					fnMap: {},
+					f: { 0: 1 },
+					fnMap: {
+						0: {
+							loc: {
+								start: { line: 1, column: 23 },
+								end: { line: 1, column: source.length - 1 },
+							},
+						},
+					},
 					s: { 0: 1 },
 					statementMap: {
 						0: {
@@ -257,6 +274,8 @@ test("rejects an empty run by default and allows an explicit opt-out", () => {
 			"node.json",
 			"--coverage-file",
 			"browser.json",
+			"--min-lines",
+			"1",
 			"--json",
 		];
 		const normal = spawnSync(process.execPath, args, { cwd, encoding: "utf8" });
@@ -274,7 +293,7 @@ test("rejects an empty run by default and allows an explicit opt-out", () => {
 
 		const nonempty = spawnSync(
 			process.execPath,
-			[cli, "score", "--coverage-file", "browser.json"],
+			[cli, "score", "--coverage-file", "browser.json", "--min-lines", "1"],
 			{ cwd, encoding: "utf8" },
 		);
 		assert.equal(nonempty.status, 0, nonempty.stderr);

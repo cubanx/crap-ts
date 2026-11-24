@@ -107,7 +107,12 @@ export async function main(argv = process.argv.slice(2)) {
 	try {
 		options = parseCliArgs(argv);
 	} catch (error) {
-		console.error(`Usage error: ${error.message}`);
+		const positional = /^Unexpected argument '(.*)'/.exec(error.message)?.[1];
+		const hint =
+			error.code === "ERR_PARSE_ARGS_UNEXPECTED_POSITIONAL" && positional
+				? ` Pass source directories as --include patterns, for example --include '${positional.replace(/\/+$/, "")}/**'.`
+				: "";
+		console.error(`Usage error: ${error.message}${hint}`);
 		return 2;
 	}
 

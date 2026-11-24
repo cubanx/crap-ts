@@ -106,10 +106,19 @@ export async function runCrapAudit({
 	};
 	const sourcePaths = new Set(listSourceFiles(root).filter(isSelected));
 
+	// Coverage tools also list non-TypeScript modules (CSS, JSON) and even
+	// directories; only TypeScript sources can be scored.
 	for (const path of coverageByFile.keys()) {
-		if (existsSync(path) && isSelected(path)) {
+		if (isSourceFile(path) && existsSync(path) && isSelected(path)) {
 			sourcePaths.add(path);
 		}
+	}
+
+	if (sourcePaths.size === 0) {
+		console.error(
+			`No source files matched under ${root}. Check --include and --exclude; patterns are relative to the working directory, for example --include 'src/**'.`,
+		);
+		return 1;
 	}
 
 	const functions = [];
@@ -157,6 +166,13 @@ export async function runCrapAudit({
 		console.error("");
 		console.error(
 			`CRAP warning: ${summary.warning} function(s) above ${warnScore}. Add coverage or simplify them before they cross ${maxScore}.`,
+		);
+	}
+
+	if (summary.functions === 0) {
+		console.error("");
+		console.error(
+			`No functions checked in ${summary.files} source file(s). Check --include, --exclude and --min-lines (${minLines}).`,
 		);
 	}
 
@@ -233,7 +249,9 @@ function buildReport({
 		thresholds: { max: maxScore, warn: warnScore ?? null, minLines },
 		summary: {
 			...summary,
+			// A gate that checks nothing must not pass.
 			passed:
+				summary.functions > 0 &&
 				summary.aboveMax === 0 &&
 				summary.missingEvidence === 0 &&
 				summary.missingFiles === 0 &&
@@ -463,12 +481,12 @@ function listSourceFiles(directory) {
 				: listSourceFiles(path);
 		}
 
-		return entry.isFile() &&
-			sourceFilePattern.test(entry.name) &&
-			!declarationFilePattern.test(entry.name)
-			? [path]
-			: [];
+		return entry.isFile() && isSourceFile(entry.name) ? [path] : [];
 	});
+}
+
+function isSourceFile(path) {
+	return sourceFilePattern.test(path) && !declarationFilePattern.test(path);
 }
 
 function matchesAny(path, patterns, emptyResult) {
