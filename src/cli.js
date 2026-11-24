@@ -21,8 +21,11 @@ Options:
   --coverage-command <cmd>
                     Command to generate coverage before scoring.
   --all            Print every analyzed function instead of applying --limit.
-  --include <text> Only analyze source files whose path contains this text.
-  --exclude <text> Skip source files whose path contains this text.
+  --include <pattern>
+                    Only analyze matching paths. Use 'src/**' for files under
+                    the root src directory or src/ for a path substring.
+  --exclude <pattern>
+                    Skip matching paths. Accepts the same patterns as --include.
   --json           Print the full JSON report (schema version 1) instead of text.
   --limit <n>      Number of rows to print in the text report. Defaults to 20.
   --min-lines <n>  Ignore functions shorter than this. Defaults to 10.

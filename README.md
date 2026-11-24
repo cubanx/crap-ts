@@ -36,7 +36,7 @@ TypeScript 7 projects do not get a nested TypeScript 5.x install.
 ## Usage
 
 ```sh
-npx crap-ts score --coverage-command "npm run test:coverage -- --coverage.reporter=json" --coverage-file coverage/unit/coverage-final.json --include src/ --exclude .test.ts
+npx crap-ts score --coverage-command "npm run test:coverage -- --coverage.reporter=json" --coverage-file coverage/unit/coverage-final.json --include 'src/**' --exclude .test.ts
 ```
 
 Add package scripts:
@@ -58,7 +58,7 @@ Put the long bits in `.crap-ts.json`:
 {
   "coverageCommand": "npm run test:coverage -- --coverage.reporter=json",
   "coverageFile": "coverage/unit/coverage-final.json",
-  "include": ["src/"],
+  "include": ["src/**"],
   "exclude": [".test.ts"],
   "max": 30,
   "warn": 25
@@ -91,10 +91,16 @@ Scores are compared unrounded: with `max` 30, a score of exactly 30 passes and
 
 `crap-ts score` walks the working directory for `.ts`, `.tsx`, `.mts` and
 `.cts` files, skipping `node_modules`, directories whose name starts with `.`,
-symbolic links and `.d.ts` declarations. `include` and `exclude` filter that
-inventory by path substring (relative to the working directory, `/`
-separators). Files named in the coverage JSON that pass the same filters are
-analyzed too, even when their extension is not in the list above.
+symbolic links and `.d.ts` declarations. `include` and `exclude` filter paths
+relative to the working directory. Use either pattern form:
+
+- `src/**` matches files recursively under the working directory's `src/`
+  directory.
+- `src/` matches a substring anywhere in the path, including
+  `tests/fixtures/src/b.ts`.
+
+Files named in the coverage JSON that pass the same filters are analyzed too,
+even when their extension is not in the list above.
 
 An inventoried file with no coverage entry **fails the gate** if it contains a
 function body or an executable module-level statement. Declaration-only files
@@ -222,10 +228,8 @@ error.
 - `--coverage-file <path>`: Istanbul `coverage-final.json`. Repeat to merge
   several runs. Defaults to `coverage/unit/coverage-final.json`.
 - `--coverage-command <cmd>`: run a coverage command before scoring.
-- `--include <text>`: only analyze source files whose path contains this text.
-  Repeatable.
-- `--exclude <text>`: skip source files whose path contains this text.
-  Repeatable.
+- `--include <pattern>`: only analyze matching paths. Repeatable.
+- `--exclude <pattern>`: skip matching paths. Repeatable.
 - `--json`: print the JSON report instead of the text report.
 - `--all`: print every analyzed function instead of applying `--limit`.
 - `--limit <n>`: number of text report rows to print. Defaults to `20`.

@@ -296,6 +296,54 @@ test("fails source files without coverage evidence and exempts declaration-only 
 	);
 });
 
+test("supports rooted directory patterns alongside substring filters", async () => {
+	await withProject(
+		{
+			"coverage-final.json": { "src/a.ts": branchCoverage([1, 1, 1]) },
+			"src/a.ts": firstSource,
+			"src-old/c.ts": firstSource,
+			"tests/fixtures/src/b.ts": firstSource,
+		},
+		async (cwd) => {
+			const options = {
+				coveragePaths: ["coverage-final.json"],
+				cwd,
+				json: true,
+				minLines: 1,
+				skipCoverage: true,
+			};
+			const included = await captureConsole(() =>
+				runCrapAudit({ ...options, includes: ["src/**"] }),
+			);
+			const includedReport = JSON.parse(included.logs.join("\n"));
+			assert.equal(included.result, 0);
+			assert.deepEqual(
+				includedReport.functions.map(({ file }) => file),
+				["src/a.ts"],
+			);
+
+			const excluded = await captureConsole(() =>
+				runCrapAudit({ ...options, excludes: ["src/**"] }),
+			);
+			const excludedReport = JSON.parse(excluded.logs.join("\n"));
+			assert.deepEqual(
+				excludedReport.functions.map(({ file }) => file),
+				["src-old/c.ts", "tests/fixtures/src/b.ts"],
+			);
+
+			for (const pattern of ["src/", "./src/", "/src/"]) {
+				const substring = await captureConsole(() =>
+					runCrapAudit({ ...options, includes: [pattern] }),
+				);
+				const substringReport = JSON.parse(substring.logs.join("\n"));
+				assert.deepEqual(substringReport.missingFiles, [
+					"tests/fixtures/src/b.ts",
+				]);
+			}
+		},
+	);
+});
+
 test("lists functions in files without coverage as missing evidence", async () => {
 	await withProject(
 		{

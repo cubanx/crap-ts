@@ -445,7 +445,12 @@ function matchesAny(path, patterns, emptyResult) {
 
 	const normalizedPath = normalizePath(path);
 
-	return patterns.some((pattern) =>
-		normalizedPath.includes(normalizePath(pattern)),
-	);
+	return patterns.some((pattern) => {
+		const normalizedPattern = normalizePath(pattern);
+		if (normalizedPattern.endsWith("/**")) {
+			return normalizedPath.startsWith(normalizedPattern.slice(0, -2));
+		}
+
+		return normalizedPath.includes(normalizedPattern);
+	});
 }
