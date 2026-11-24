@@ -130,8 +130,8 @@ Coverage is per function, from Istanbul statement counters:
   entry, or the function was added after coverage ran.
 - The exception is code under a coverage ignore comment, which coverage tools
   leave without counters on purpose. Such a function is listed with
-  `evidence: "ignored"` and level `ignored`, never fails or warns, and sorts
-  after every other row. Its `coverage` (0) and `crap` are shown for
+  `evidence: "ignored"` and sorts after every other row. It has level
+  `ignored` by default. Its `coverage` (0) and `crap` are shown for
   reference only. crap-ts recognises `istanbul`, `v8` and `c8` comments
   (block or line):
   - `ignore next` covers the next statement or declaration, including any
@@ -140,13 +140,18 @@ Coverage is per function, from Istanbul statement counters:
   - `ignore if` and `ignore else`, before an `if` statement, cover its `if`
     branch or its `else` branch.
   - `ignore start` … `ignore stop` covers the region between them.
-  - `ignore file` covers the whole file, which then needs no coverage entry.
+  - `ignore file` covers the whole file. By default, the file needs no coverage entry.
 
   Comment-like text inside strings, template literals, regular expressions
   and JSX text is not treated as a comment.
 
   An ignore comment only exempts a function that has no counters. If the
   coverage tool still measured it, its counters are used.
+
+  To fail the gate on rows with ignored evidence, pass `--fail-on-ignored`
+  or set `failOnIgnored` to `true` in `.crap-ts.json` or `runCrapAudit`.
+  The text report lists these failures even beyond `--limit`.
+  Executable files with an `ignore file` comment also need a coverage entry.
 - Module-level statements belong to no function.
 
 Pass `--coverage-file` more than once (or a `coverageFile` array) to merge
@@ -195,7 +200,7 @@ abstract methods have no body and no row. Unnamed functions are reported as
 
 `minLines` (default 10) hides functions shorter than that many lines from both
 reports and the gate. A function fails when its score is above `max` or its
-evidence is `missing`. Functions with evidence `ignored` never fail or warn.
+evidence is `missing`. With `failOnIgnored`, evidence of `ignored` also fails.
 
 When the CRAP check flags a hotspot:
 
@@ -228,11 +233,13 @@ error.
   Repeatable.
 - `--json`: print the JSON report instead of the text report.
 - `--all`: print every analyzed function instead of applying `--limit`.
-- `--limit <n>`: number of text report rows to print. Defaults to `20`.
+- `--limit <n>`: number of text report rows to print before any additional
+  failures from `--fail-on-ignored`. Defaults to `20`.
 - `--max <n>`: fail when any score is above this. Defaults to `30`.
 - `--warn <n>`: warn, without failing, when a score is above this. Must not
   exceed `--max`. Off by default.
 - `--min-lines <n>`: ignore functions shorter than this. Defaults to `10`.
+- `--fail-on-ignored`: fail on ignored coverage evidence.
 - `--report-only`: print results without failing on the gate.
 - `--skip-coverage`: do not run the coverage command.
 
@@ -266,6 +273,7 @@ word, because you'd be mad at me if it didn't, and I'd also be mad at me.
 | `max` | number | `--max` | `30` |
 | `warn` | number | `--warn` | none |
 | `minLines` | number | `--min-lines` | `10` |
+| `failOnIgnored` | boolean | `--fail-on-ignored` | `false` |
 | `reportOnly` | boolean | `--report-only` | `false` |
 | `skipCoverage` | boolean | `--skip-coverage` | `false` |
 
@@ -312,23 +320,24 @@ changed in meaning. A breaking change bumps `schemaVersion`.
 
 - `thresholds.warn` is `null` when no warn threshold is set.
 - `summary.files`: source files analyzed. `functions`: rows listed.
-  `aboveMax`: rows with `crap > max`, not counting `ignored` rows. `warning`: rows with level `warn`.
+  `aboveMax`: rows with `crap > max`, excluding rows with evidence `ignored`. `warning`: rows with level `warn`.
   `missingEvidence`: rows with evidence `missing`. `ignored`: rows with
   evidence `ignored`. `missingFiles`: length of `missingFiles`.
-- `summary.passed` is the gate verdict, `aboveMax`, `missingEvidence` and
-  `missingFiles` all zero, and ignores `--report-only`.
+- `summary.passed` requires `aboveMax`, `missingEvidence` and `missingFiles`
+  to be zero. With `failOnIgnored`, `ignored` must also be zero.
+  `--report-only` only affects the exit code.
 - `functions` lists every function at or above `minLines`, never truncated by
   `--limit`, sorted by `crap` descending, then `file`, `line`, `column`, with
-  `ignored` rows after all others.
+  rows with evidence `ignored` after all others.
 - `file` is relative to the working directory with `/` separators. `line` and
   `column` are one-based and point at the function's first token.
 - `coverage` is a percentage from 0 to 100. `crap` and `coverage` are
   unrounded.
 - `evidence` is `statements`, `function`, `ignored` or `missing` (see
   [Coverage](#coverage)).
-- `level` is `fail` (above `max`, or missing evidence), `warn` (above `warn`),
-  `ignored` (evidence `ignored`) or `ok`. For `ignored` rows, `coverage` is 0
-  and `crap` is the score at 0% coverage, for reference only.
+- `level` is `fail` (above `max`, missing evidence, or ignored evidence with
+  `failOnIgnored`), `warn` (above `warn`), `ignored` (ignored evidence by
+  default), or `ok`.
 - `missingFiles` lists inventoried files with executable code and no coverage
   entry, sorted.
 
@@ -343,8 +352,8 @@ The package root is the only entry point. These exports, and the types in
   command or a missing coverage file). It rejects with an `Error`
   when coverage or source input is malformed or stale. Options mirror the config
   keys: `coverageCommand`, `coveragePaths`, `cwd`, `includes`, `excludes`,
-  `json`, `all`, `limit`, `maxScore`, `warnScore`, `minLines`, `reportOnly`,
-  `skipCoverage`.
+  `json`, `all`, `limit`, `maxScore`, `warnScore`, `minLines`, `failOnIgnored`,
+  `reportOnly`, `skipCoverage`.
 - `analyzeFileRisk({ filePath, sourceText, coverage?, minLines?, sourceFilePath? }): Promise<FunctionRisk[]>`
   scores the functions in one source text. `coverage` is that file's entry
   from `coverage-final.json`. A function without counters has

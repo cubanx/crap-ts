@@ -13,6 +13,7 @@ test("help subcommand prints help", async () => {
 
 	assert.match(messages.logs.join("\n"), /Usage:/);
 	assert.match(messages.logs.join("\n"), /--coverage-file/);
+	assert.match(messages.logs.join("\n"), /--fail-on-ignored/);
 });
 
 test("parses direct audit flags", () => {
@@ -25,6 +26,7 @@ test("parses direct audit flags", () => {
 		"--include",
 		"/scripts/",
 		"--all",
+		"--fail-on-ignored",
 		"--report-only",
 		"--max",
 		"40",
@@ -46,6 +48,7 @@ test("parses direct audit flags", () => {
 	assert.deepEqual(options.excludes, [".test.ts"]);
 	assert.equal(options.json, true);
 	assert.equal(options.all, true);
+	assert.equal(options.failOnIgnored, true);
 	assert.equal(options.reportOnly, true);
 	assert.equal(options.maxScore, 40);
 	assert.equal(options.warnScore, 35);
@@ -66,6 +69,7 @@ test("loads default .crap-ts.json config", () => {
 			coverageCommand: "npm run coverage",
 			coverageFile: ["coverage/node.json", "coverage/browser.json"],
 			exclude: ".test.ts",
+			failOnIgnored: true,
 			include: ["src", "scripts"],
 			json: true,
 			limit: 7,
@@ -88,6 +92,7 @@ test("loads default .crap-ts.json config", () => {
 	]);
 	assert.deepEqual(options.excludes, [".test.ts"]);
 	assert.deepEqual(options.includes, ["src", "scripts"]);
+	assert.equal(options.failOnIgnored, true);
 	assert.equal(options.json, true);
 	assert.equal(options.limit, 7);
 	assert.equal(options.maxScore, 42);
@@ -221,6 +226,7 @@ test("rejects non-boolean and non-string config values", async () => {
 
 	try {
 		for (const [config, message] of [
+			[{ failOnIgnored: "true" }, /failOnIgnored must be a boolean/],
 			[{ reportOnly: "false" }, /reportOnly must be a boolean/],
 			[{ skipCoverage: 1 }, /skipCoverage must be a boolean/],
 			[

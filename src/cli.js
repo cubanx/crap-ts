@@ -24,10 +24,12 @@ Options:
   --include <text> Only analyze source files whose path contains this text.
   --exclude <text> Skip source files whose path contains this text.
   --json           Print the full JSON report (schema version 1) instead of text.
-  --limit <n>      Number of rows to print in the text report. Defaults to 20.
+  --limit <n>      Number of text rows before additional ignored failures. Defaults to 20.
   --min-lines <n>  Ignore functions shorter than this. Defaults to 10.
   --max <n>        Fail when any function's CRAP score is above this. Defaults to 30.
   --warn <n>       Warn, without failing, when any row is above this score.
+  --fail-on-ignored
+                    Fail on functions with ignored coverage evidence.
   --report-only    Print CRAP report without failing on threshold.
   --skip-coverage  Do not run the coverage command.
   --help           Show this help.
@@ -45,6 +47,7 @@ export function parseCliArgs(argv, { cwd = process.cwd() } = {}) {
 			"coverage-file": { type: "string", multiple: true },
 			"coverage-command": { type: "string" },
 			exclude: { type: "string", multiple: true },
+			"fail-on-ignored": { type: "boolean" },
 			help: { type: "boolean", short: "h" },
 			include: { type: "string", multiple: true },
 			json: { type: "boolean" },
@@ -66,6 +69,7 @@ export function parseCliArgs(argv, { cwd = process.cwd() } = {}) {
 			coverageCommand: values["coverage-command"],
 			coveragePaths: values["coverage-file"],
 			excludes: values.exclude,
+			failOnIgnored: values["fail-on-ignored"],
 			help: values.help,
 			includes: values.include,
 			json: values.json,
@@ -161,6 +165,7 @@ const configKeys = new Set([
 	"coverageCommand",
 	"coverageFile",
 	"exclude",
+	"failOnIgnored",
 	"include",
 	"json",
 	"limit",
@@ -193,6 +198,11 @@ function normalizeConfig(config) {
 		),
 		coveragePaths: normalizeConfigList(config.coverageFile, "coverageFile"),
 		excludes: normalizeConfigList(config.exclude, "exclude"),
+		failOnIgnored: parseConfigType(
+			config.failOnIgnored,
+			"failOnIgnored",
+			"boolean",
+		),
 		includes: normalizeConfigList(config.include, "include"),
 		json: parseConfigType(config.json, "json", "boolean"),
 		limit: parseConfigNumber(config.limit, "limit"),
@@ -254,6 +264,7 @@ function applyDefaults(options) {
 		all: options.all ?? false,
 		help: options.help ?? false,
 		excludes: options.excludes ?? [],
+		failOnIgnored: options.failOnIgnored ?? false,
 		includes: options.includes ?? [],
 		json: options.json ?? false,
 		reportOnly: options.reportOnly ?? false,

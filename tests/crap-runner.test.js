@@ -560,6 +560,78 @@ test("lists ignored functions last without failing the gate", async () => {
 	);
 });
 
+test("fails ignored functions only when requested", async () => {
+	const emptyCoverage = { f: {}, fnMap: {}, s: {}, statementMap: {} };
+	await withProject(
+		{
+			"coverage-final.json": {
+				"dabo.ts": emptyCoverage,
+				"holosuite.ts": emptyCoverage,
+			},
+			"dabo.ts": `/* istanbul ignore file */
+function deal() { return 1; }
+`,
+			"holosuite.ts": `/* v8 ignore next */
+function sing() { return 1; }
+/* c8 ignore start */
+function dance() { return 1; }
+/* c8 ignore stop */
+/* istanbul ignore if */
+if (open) {
+  function greet() { return 1; }
+}
+/* istanbul ignore else */
+if (open) {
+  welcome();
+} else {
+  function close() { return 1; }
+}
+`,
+		},
+		async (cwd) => {
+			const options = {
+				coveragePaths: ["coverage-final.json"],
+				cwd,
+				minLines: 1,
+			};
+			const names = ["deal", "sing", "dance", "greet", "close"];
+
+			for (const failOnIgnored of [false, true]) {
+				const messages = await captureConsole(() =>
+					runCrapAudit({ ...options, failOnIgnored, json: true }),
+				);
+				const report = JSON.parse(messages.logs.join("\n"));
+				const level = failOnIgnored ? "fail" : "ignored";
+
+				assert.equal(messages.result, failOnIgnored ? 1 : 0);
+				assert.equal(report.summary.passed, !failOnIgnored);
+				assert.equal(report.summary.aboveMax, 0);
+				assert.equal(report.summary.ignored, names.length);
+				assert.deepEqual(report.missingFiles, []);
+				assert.deepEqual(
+					report.functions.map((row) => [row.name, row.evidence, row.level]),
+					names.map((name) => [name, "ignored", level]),
+				);
+			}
+
+			const messages = await captureConsole(() =>
+				runCrapAudit({
+					...options,
+					failOnIgnored: true,
+					limit: 1,
+					reportOnly: true,
+				}),
+			);
+			assert.equal(messages.result, 0);
+			const rows = messages.logs.filter((line) => line.startsWith("FAIL "));
+			assert.deepEqual(
+				rows.map((line) => line.split(" | ")[1]),
+				names,
+			);
+		},
+	);
+});
+
 test("fails functions without counters that no ignore comment covers", async () => {
 	await withProject(
 		{
@@ -593,25 +665,35 @@ test("fails functions without counters that no ignore comment covers", async () 
 	);
 });
 
-test("exempts files with a file-level ignore comment from missing evidence", async () => {
+test("requires coverage for executable files with an ignore file comment in strict mode", async () => {
 	await withProject(
 		{
 			"coverage-final.json": {},
+			"types.ts": "/* istanbul ignore file */\nexport type Program = string;\n",
 			"holosuite.ts":
 				"/* istanbul ignore file */\nexport const program = vicFontaine();\n",
 		},
 		async (cwd) => {
-			const messages = await captureConsole(() =>
-				runCrapAudit({
-					coveragePaths: ["coverage-final.json"],
-					cwd,
-					json: true,
-					skipCoverage: true,
-				}),
-			);
+			for (const failOnIgnored of [false, true]) {
+				const messages = await captureConsole(() =>
+					runCrapAudit({
+						coveragePaths: ["coverage-final.json"],
+						cwd,
+						failOnIgnored,
+						json: true,
+						skipCoverage: true,
+					}),
+				);
+				const report = JSON.parse(messages.logs.join("\n"));
 
-			assert.equal(messages.result, 0);
-			assert.deepEqual(JSON.parse(messages.logs.join("\n")).missingFiles, []);
+				assert.equal(messages.result, failOnIgnored ? 1 : 0);
+				assert.equal(report.summary.passed, !failOnIgnored);
+				assert.equal(report.summary.ignored, 0);
+				assert.deepEqual(
+					report.missingFiles,
+					failOnIgnored ? ["holosuite.ts"] : [],
+				);
+			}
 		},
 	);
 });

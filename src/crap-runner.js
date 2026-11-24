@@ -16,6 +16,7 @@ export async function runCrapAudit({
 	coveragePaths = ["coverage/unit/coverage-final.json"],
 	cwd = process.cwd(),
 	excludes = [],
+	failOnIgnored = false,
 	includes = [],
 	json = false,
 	limit = 20,
@@ -102,6 +103,7 @@ export async function runCrapAudit({
 		const coverage = coverageByFile.get(sourceFilePath);
 		const analysis = await analyzeSource({
 			coverage,
+			failOnIgnored,
 			filePath,
 			sourceFilePath,
 			sourceText: readFileSync(sourceFilePath, "utf8"),
@@ -117,6 +119,7 @@ export async function runCrapAudit({
 	}
 
 	const report = buildReport({
+		failOnIgnored,
 		files: sourcePaths.size,
 		functions,
 		maxScore,
@@ -163,6 +166,7 @@ export async function runCrapAudit({
 }
 
 function buildReport({
+	failOnIgnored,
 	files,
 	functions,
 	maxScore,
@@ -173,7 +177,7 @@ function buildReport({
 	const rows = functions
 		.sort(
 			(left, right) =>
-				// Ignored rows never gate, so keep them below every gated row.
+				// Keep ignored rows below rows that use coverage counters or need them.
 				Number(left.evidence === "ignored") -
 					Number(right.evidence === "ignored") ||
 				right.crapScore - left.crapScore ||
@@ -194,13 +198,13 @@ function buildReport({
 			coveredStatements: risk.coveredStatements,
 			evidence: risk.evidence,
 			crap: risk.crapScore,
-			level: getRiskLevel(risk, { maxScore, warnScore }),
+			level: getRiskLevel(risk, { failOnIgnored, maxScore, warnScore }),
 		}));
 	const count = (predicate) => rows.filter(predicate).length;
 	const summary = {
 		files,
 		functions: rows.length,
-		aboveMax: count((row) => row.level !== "ignored" && row.crap > maxScore),
+		aboveMax: count((row) => row.evidence !== "ignored" && row.crap > maxScore),
 		warning: count((row) => row.level === "warn"),
 		missingEvidence: count((row) => row.evidence === "missing"),
 		ignored: count((row) => row.evidence === "ignored"),
@@ -215,7 +219,8 @@ function buildReport({
 			passed:
 				summary.aboveMax === 0 &&
 				summary.missingEvidence === 0 &&
-				summary.missingFiles === 0,
+				summary.missingFiles === 0 &&
+				(!failOnIgnored || summary.ignored === 0),
 		},
 		functions: rows,
 		missingFiles,
@@ -240,7 +245,11 @@ function printTextReport({ all, limit, maxScore, report, warnScore }) {
 		`CRAP report: ${summary.functions} functions checked, ${summary.aboveMax} above ${maxScore}${warningSummary}${missingSummary}${ignoredSummary}.`,
 	);
 
-	for (const row of all ? functions : functions.slice(0, limit)) {
+	const visibleRows = all ? functions : functions.slice(0, limit);
+	const hiddenIgnoredFailures = functions
+		.slice(visibleRows.length)
+		.filter((row) => row.evidence === "ignored" && row.level === "fail");
+	for (const row of [...visibleRows, ...hiddenIgnoredFailures]) {
 		console.log(formatReportRow(row));
 	}
 }
@@ -260,9 +269,9 @@ function formatReportRow(row) {
 	].join(" | ");
 }
 
-function getRiskLevel(risk, { maxScore, warnScore }) {
+function getRiskLevel(risk, { failOnIgnored, maxScore, warnScore }) {
 	if (risk.evidence === "ignored") {
-		return "ignored";
+		return failOnIgnored ? "fail" : "ignored";
 	}
 
 	if (risk.crapScore > maxScore || risk.evidence === "missing") {

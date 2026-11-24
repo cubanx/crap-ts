@@ -6,6 +6,8 @@ export interface CrapAuditOptions {
 	cwd?: string;
 	/** Skip source files whose path contains any of these substrings. */
 	excludes?: string[];
+	/** Fail on functions with ignored coverage evidence and require coverage entries for executable files with an ignore file comment. Defaults to false. */
+	failOnIgnored?: boolean;
 	/** Only analyze source files whose path contains one of these substrings. */
 	includes?: string[];
 	/** Print the JSON report (schema version 1) to stdout instead of the text report. */
