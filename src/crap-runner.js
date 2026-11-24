@@ -8,6 +8,9 @@ import { normalizePath } from "./path-utils.js";
 const reportSchemaVersion = 1;
 
 const sourceFilePattern = /\.[cm]?tsx?$/;
+// The inventory walk finds TypeScript only, but JavaScript sources named in
+// coverage are scored too, as in 2.0.
+const javaScriptFilePattern = /\.[cm]?jsx?$/;
 const declarationFilePattern = /\.d\.[cm]?ts$/;
 // The test files Vitest and Jest find by default: `*.test.*`, `*.spec.*`
 // (and Vitest's `*.test-d.*` type tests), and anything under `__tests__/`.
@@ -102,27 +105,40 @@ export async function runCrapAudit({
 		root,
 		allowEmptyCoverage,
 	);
-	const isSelected = (path) => {
+	const matchesFilters = (path) => {
 		const relativePath = relative(root, path);
 		return (
-			(includeTests || !testFilePattern.test(normalizePath(relativePath))) &&
 			matchesAny(relativePath, includes, true) &&
 			!matchesAny(relativePath, excludes, false)
 		);
 	};
-	const sourcePaths = new Set(listSourceFiles(root).filter(isSelected));
+	const isTestFile = (path) =>
+		testFilePattern.test(normalizePath(relative(root, path)));
+	const candidatePaths = new Set(listSourceFiles(root).filter(matchesFilters));
 
-	// Coverage tools also list non-TypeScript modules (CSS, JSON) and even
-	// directories; only TypeScript sources can be scored.
+	// Coverage tools also list non-source modules (CSS, JSON) and even
+	// directories; only TypeScript and JavaScript sources can be scored.
 	for (const path of coverageByFile.keys()) {
-		if (isSourceFile(path) && existsSync(path) && isSelected(path)) {
-			sourcePaths.add(path);
+		if (
+			isCoverageSourceFile(path) &&
+			existsSync(path) &&
+			matchesFilters(path)
+		) {
+			candidatePaths.add(path);
 		}
 	}
 
+	const sourcePaths = new Set(
+		[...candidatePaths].filter((path) => includeTests || !isTestFile(path)),
+	);
+
 	if (sourcePaths.size === 0) {
+		const testHint =
+			candidatePaths.size > 0
+				? ` The ${candidatePaths.size} matching file(s) were skipped as test files; pass --include-tests to analyze them.`
+				: "";
 		console.error(
-			`No source files matched under ${root}. Check --include and --exclude; patterns are relative to the working directory, for example --include 'src/**'.`,
+			`No source files matched under ${root}. Check --include and --exclude; patterns are relative to the working directory, for example --include 'src/**'.${testHint}`,
 		);
 		return 1;
 	}
@@ -493,6 +509,10 @@ function listSourceFiles(directory) {
 
 function isSourceFile(path) {
 	return sourceFilePattern.test(path) && !declarationFilePattern.test(path);
+}
+
+function isCoverageSourceFile(path) {
+	return isSourceFile(path) || javaScriptFilePattern.test(path);
 }
 
 function matchesAny(path, patterns, emptyResult) {

@@ -119,7 +119,8 @@ function verifyConsumerTypescript(version) {
 		);
 
 		// Vitest V8 coverage lists side-effect imports such as CSS under
-		// absolute keys; only TypeScript sources may reach the parser.
+		// absolute keys; only TypeScript and JavaScript sources may reach the
+		// parser.
 		const sideEffect = run(
 			binPath(consumer, "crap-ts"),
 			[
@@ -134,7 +135,11 @@ function verifyConsumerTypescript(version) {
 			{ allowFailure: true, cwd: consumer },
 		);
 		assert.equal(sideEffect.status, 0, sideEffect.stderr);
-		assert.match(sideEffect.stdout, /1 functions checked, 0 above 30/);
+		assert.match(sideEffect.stdout, /2 functions checked, 0 above 30/);
+		assert.match(
+			sideEffect.stdout,
+			/src\/legacy\.js:3 \| legacyClass \| CRAP 6\.0 \| complexity 2 \| coverage 0%/,
+		);
 		assert.match(
 			sideEffect.stdout,
 			/src\/portrait\.ts:3 \| portraitClass \| CRAP 2\.0 \| complexity 2 \| coverage 100%/,
@@ -234,6 +239,15 @@ export function portraitClass(active: boolean): string {
 `,
 	);
 	writeFileSync(
+		join(consumer, "src", "legacy.js"),
+		`import "./portrait.css";
+
+export function legacyClass(active) {
+\treturn active ? "legacy active" : "legacy";
+}
+`,
+	);
+	writeFileSync(
 		join(consumer, "src", "portrait.css"),
 		".odo { color: amber; }\n",
 	);
@@ -254,6 +268,21 @@ export function portraitClass(active: boolean): string {
 		join(consumer, "side-effect-coverage.json"),
 		JSON.stringify({
 			[join(root, "src", "portrait.ts")]: portraitCoverage,
+			[join(root, "src", "legacy.js")]: {
+				f: { 0: 0 },
+				fnMap: {
+					0: {
+						loc: {
+							end: { column: 1, line: 5 },
+							start: { column: 36, line: 3 },
+						},
+					},
+				},
+				s: { 0: 0 },
+				statementMap: {
+					0: { end: { column: 44, line: 4 }, start: { column: 1, line: 4 } },
+				},
+			},
 			[join(root, "src", "portrait.css")]: {
 				f: {},
 				fnMap: {},

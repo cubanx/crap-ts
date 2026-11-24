@@ -96,14 +96,18 @@ below a directory at that root. For example, `src/**` matches `src/a.ts`
 and `src/lib/b.ts`. Plain patterns match substrings. For example, `src/`
 also matches `tests/fixtures/src/c.ts`. An asterisk outside the trailing
 `/**` is a usage error. Both forms accept `/` and `\` as
-separators. The same filters apply to files named in the coverage JSON.
-Coverage entries for other files, such as CSS or JSON modules that Vitest
-reports for side-effect imports, are not scored.
+separators. The same filters, including the test-file default below, apply
+to files named in the coverage JSON. Coverage entries for `.js`, `.jsx`,
+`.mjs` and `.cjs` files are scored too. Coverage entries for other files, such
+as CSS or JSON modules that Vitest reports for side-effect imports, are not
+scored.
 
 If the filters select no source files, `crap-ts` exits `1` before scoring,
-also with `--report-only`. If the selected files hold no function with at
-least `--min-lines` lines, the gate fails: a gate that checks nothing never
-passes. With `--report-only`, `crap-ts` prints a warning and exits `0`.
+also with `--report-only`. If only the test-file default removed the matching
+files, the message names `--include-tests`.
+
+If the selected files hold no function with at least `--min-lines` lines,
+the gate fails: a gate that checks nothing never passes. With `--report-only`, `crap-ts` prints a warning and exits `0`.
 
 An inventoried file with no coverage entry **fails the gate** if it contains a
 function body or an executable module-level statement. Declaration-only files
@@ -410,8 +414,9 @@ or crashed:
   also with `--report-only`.
 - If no function is checked, the gate fails. With `--report-only`, `crap-ts`
   warns and exits `0`.
-- Coverage entries for files that are not TypeScript sources, such as CSS and
-  JSON modules from side-effect imports, are no longer scored. With
+- Coverage entries for files that are not TypeScript or JavaScript sources,
+  such as CSS and JSON modules from side-effect imports, are no longer
+  scored. With
   TypeScript 7, these entries crashed 2.0.
 - A positional argument such as `crap-ts score src` is still a usage error.
   The message now suggests the matching `--include` pattern.

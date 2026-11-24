@@ -423,6 +423,122 @@ test("fails when the filters select no source files", async () => {
 	);
 });
 
+test("names --include-tests when only test files match", async () => {
+	await withProject(
+		{
+			"coverage-final.json": { "src/first.ts": branchCoverage([1, 1, 1]) },
+			"src/first.ts": firstSource,
+			"src/__tests__/first.ts": firstSource,
+			"src/second.test.ts": secondSource,
+		},
+		async (cwd) => {
+			const options = {
+				coveragePaths: ["coverage-final.json"],
+				cwd,
+				minLines: 1,
+				skipCoverage: true,
+			};
+
+			for (const includes of [["src/__tests__/**"], [".test.ts"]]) {
+				const messages = await captureConsole(() =>
+					runCrapAudit({ ...options, includes }),
+				);
+
+				assert.equal(messages.result, 1, includes[0]);
+				assert.match(
+					messages.errors.join("\n"),
+					/No source files matched.*skipped as test files.*--include-tests/s,
+				);
+			}
+
+			const unrelated = await captureConsole(() =>
+				runCrapAudit({ ...options, includes: ["lib/**"] }),
+			);
+			assert.equal(unrelated.result, 1);
+			assert.doesNotMatch(unrelated.errors.join("\n"), /--include-tests/);
+		},
+	);
+});
+
+test("keeps scoring JavaScript sources named in coverage", async () => {
+	// Complexity 14, never run: CRAP 210.
+	const legacySource = `export function legacy(a, b, c, d, e) {
+  if (a) return 1;
+  if (b) return 2;
+  if (c) return 3;
+  if (d) return 4;
+  if (e) return 5;
+  if (a && b) return 6;
+  if (b && c) return 7;
+  if (c && d) return 8;
+  if (d && e) return 9;
+  return 0;
+}
+`;
+	const legacyCoverage = {
+		f: { 0: 0 },
+		fnMap: {
+			0: {
+				loc: { end: { column: 1, line: 12 }, start: { column: 7, line: 1 } },
+			},
+		},
+		s: Object.fromEntries(Array.from({ length: 10 }, (_, index) => [index, 0])),
+		statementMap: Object.fromEntries(
+			Array.from({ length: 10 }, (_, index) => [
+				index,
+				location(index + 2, 2, 18),
+			]),
+		),
+	};
+
+	await withProject(
+		{
+			"src/first.ts": firstSource,
+			"src/legacy.js": legacySource,
+			"src/legacy.mjs": legacySource,
+			"src/legacy.cjs": legacySource,
+			"src/legacy.jsx": legacySource,
+			"src/legacy.test.js": legacySource,
+		},
+		async (cwd) => {
+			const root = realpathSync.native(cwd);
+			writeFileSync(
+				join(cwd, "coverage-final.json"),
+				JSON.stringify({
+					[join(root, "src/first.ts")]: branchCoverage([1, 1, 1]),
+					...Object.fromEntries(
+						["js", "mjs", "cjs", "jsx", "test.js"].map((extension) => [
+							join(root, `src/legacy.${extension}`),
+							legacyCoverage,
+						]),
+					),
+				}),
+			);
+
+			const messages = await captureConsole(() =>
+				runCrapAudit({
+					coveragePaths: ["coverage-final.json"],
+					cwd,
+					json: true,
+					skipCoverage: true,
+				}),
+			);
+			const report = JSON.parse(messages.logs.join("\n"));
+
+			assert.equal(messages.result, 1);
+			assert.deepEqual(
+				report.functions.map((row) => [row.file, row.complexity, row.crap]),
+				[
+					["src/legacy.cjs", 14, 210],
+					["src/legacy.js", 14, 210],
+					["src/legacy.jsx", 14, 210],
+					["src/legacy.mjs", 14, 210],
+				],
+			);
+		},
+	);
+});
+
 test("fails the gate when no functions are checked", async () => {
 	await withProject(
 		{
